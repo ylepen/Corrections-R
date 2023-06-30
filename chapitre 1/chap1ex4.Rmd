@@ -1,0 +1,187 @@
+---
+title: "chap1ex4"
+author: "Yannick Le Pen"
+date: "2023-06-26"
+output:
+  html_document:
+    df_print: paged
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+# Chapitre I, exercice 4 : Etude préliminaire du CAC 40
+
+## Importation des données
+
+### Option 1 : à partir d'un fichier de données
+
+#### Source : Datastream
+
+Datastream est une base de données payante accessible à la BU Dauphine. Elle présente l'avantage de fournir des données complètes. Le séparateur de décimale est le point "."
+
+```{r}
+CAC40_df_1<-read.csv2("C:\\users\\ylepen\\Documents\\COURS dauphine\\econometrie II\\data exercice\\cac40_datastream.csv",dec=".",col.names = c('Date','CAC40'))
+```
+
+Autre méthode possible :
+```{r}
+masource<-"C:\\users\\ylepen\\Documents\\COURS dauphine\\econometrie II\\data exercice\\"
+CAC40_df_1<-read.csv2(file=paste0(masource,"cac40_datastream.csv"),dec=".",col.names = c('Date','CAC40'))
+#CAC40_df_1$Date<-as.Date(CAC40_df_1$Date,format = "%d/%m/%y")
+```
+
+On convertit la colonne Date au format date Year/Month/Day
+
+```{r}
+CAC40_df_1$Date<-as.Date(CAC40_df_1$Date,format = "%d/%m/%Y")
+tail(CAC40_df_1$Date)
+
+
+#library(lubridate)
+#CAC40_df_1$Date<-dmy(CAC40_df_1$Date)
+
+```
+
+On vérifie qu'il n'y a pas de données manquantes
+
+```{r}
+sapply(CAC40_df_1,function(x) sum(is.na(x)))
+```
+Les données commencent en "1987-07-09". On décide d'étudier la série à partir de "1990-01-01" en partie pour avoir le même échantillon que les autres sources de données.
+
+```{r}
+CAC40_df_1<-CAC40_df_1[CAC40_df_1$Date>="1990-01-01",]
+```
+
+#### à partir d'un fichier csv provenant de Yahoo Finance
+Les données de Yahoo contiennent des données manquantes représentées par le terme ''null''. Avec R, "null" n'est pas le symbole habituel des données manquantes qui est "na". Dans l'importation des données à partir de la fonction read.csv, on ajoute l'option na.strings=c("null") pour lui indiquer que le symbole des données manquantes dans le fichier ^FCHI.csv.
+
+```{r}
+library(readr)
+CAC40_df_2<-read.csv("C:\\users\\ylepen\\Documents\\COURS dauphine\\econometrie II\\data exercice\\^FCHI.csv",na.strings=c("null"))
+class(CAC40_df_2)
+str(CAC40_df_2)
+```
+
+Décompte des données manquantes : 
+
+```{r}
+sapply(CAC40_df_2,function(x) sum(is.na(x)))
+```
+Il existe plusieurs manières de gérer les données manquantes. On décide ici de supprimer les dates ayant des données manquantes car elles peuvent empécher l'éxécution de certaines fonctions de R. 
+
+
+```{r}
+CAC40_df_2<-na.omit(CAC40_df_2)
+sapply(CAC40_df_2,function(x) sum(is.na(x)))
+```
+Rappel : Les fonctions 
+class() : affiche la classe d'un objet
+str() : affiche la structure d'un objet
+head() : affiche les premières lignes d'un objet
+tail() : affiche les dernières lignes d'un objet
+
+```{r}
+class(CAC40_df_2)
+```
+
+```{r}
+str(CAC40_df_2)
+```
+
+```{r}
+head(CAC40_df_2)
+tail(CAC40_df_2)
+```
+
+### Option 2 : Importation des données à partir d'un site internet
+
+#### librarie quantmod
+```{r}
+library(TT)
+library(quantmod)
+
+
+CAC40 <-getSymbols('^FCHI',auto.assign = FALSE,from ='1990-01-01')
+class(CAC40) # an xts object
+
+CAC40_df<-data.frame(date=index(CAC40),coredata(CAC40))# conversion xts en dataframe avec les dates comme indices
+colnames(CAC40_df)<-c("Date","Open","High","Low","Close","Vol","Adj.Close")
+sapply(CAC40_df,function(x) sum(is.na(x)))
+CAC40_df<-na.omit(CAC40_df)
+sapply(CAC40_df,function(x) sum(is.na(x)))
+class(CAC40_df)
+```
+### Utilisation de la librairie yahoofinancer 
+Il existe aussi la librairie yahoofinancer mais elle ne semble pas capable d'importer des données dès qu'elles contiennent des observations manquantes. On importe ici des données mensuelles et non quotidiennes.
+
+```{r, echo=TRUE}
+library(yahoofinancer)
+cac40<-Index$new('^FCHI')
+cac40_data<-cac40$get_history(start = '1990-01-01',interval = '1mo')
+```
+
+
+
+## Représentation graphique de l'indice CAC40
+On utilise les données importées via quantmod. 
+
+
+
+```{r, echo=FALSE}
+library(ggplot2)
+p1<-ggplot(data=CAC40_df,aes(x=Date,y=Adj.Close))+geom_line(colour='blue')+ggtitle('Indice CAC 40 en log')+xlab('date')+ylab('indice en log')+theme_bw()+theme(plot.title = element_text(hjust = 0.5))
+p1
+```
+
+## Calcul de l'indice en log
+
+On ajoute l'indice en log au dataframe cac40
+```{r}
+CAC40_df$logI<-log(CAC40_df$Adj.Close)
+```
+
+```{r}
+library(ggplot2)
+p<-ggplot(data=CAC40_df,aes(x=Date,y=logI))+geom_line(colour='blue')+ggtitle('Indice CAC 40 en log')+xlab('date')+ylab('indice en log')+theme_bw()+theme(plot.title = element_text(hjust = 0.5))
+p
+```
+
+## Calcul de l'indice en différence première
+
+On note $I_{t}$ l'indice CAC40, $i_{t}=log(I_{t})$ l'indice en logarithme, alors la différence première de l'indice en logarithme est $i_{t}-i_{t-1}=log(P_{t})-log(P_{t-1})=log(\frac{P{t}}{P_{t-1}})  r_{t}$.
+
+En calculant la différence première, on perd la première observation. On ne peut donc stocker la nouvelle variable créée dans le dataframe précédent. 
+
+
+```{r}
+r_CAC40_df<-data.frame(CAC40_df$Date[-1],diff(CAC40_df$logI))
+colnames(r_CAC40_df)<-c('Date','rdt')
+```
+
+
+
+```{r}
+str(r_CAC40_df)
+head(r_CAC40_df)
+```
+
+
+
+
+
+```{r}
+p<-ggplot(data=r_CAC40_df,aes(x=Date,y=rdt))+geom_line(colour='blue')+ggtitle('Indice CAC 40 en log')+xlab('date')+ylab('Rendement CAC40')+theme_bw()+theme(plot.title = element_text(hjust = 0.5))
+p
+
+```
+
+```{r}
+acf(x = r_CAC40_df$rdt,lag.max = 20)
+```
+```{r}
+pacf(x = r_CAC40_df$rdt,lag.max = 20,main='Autocorrelations partielles')
+```
+

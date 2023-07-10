@@ -8,21 +8,27 @@ output:
 ---
 
 ```{r setup, include=FALSE}
-knitr::opts_chunk$set(echo = TRUE)
+knitr::opts_chunk$set(warning = FALSE, message= FALSE)
 ```
 
-# Chapitre I, exercice 4 : Etude préliminaire du CAC 40
+# Chapitre I, exercice 4 : Etude de l'indice CAC 40
 
 ## Importation des données
 
-### Option 1 : à partir d'un fichier de données
+On commence par présenter différentes manières d'importer des données :
 
-#### Source : Datastream
+1. A partir d'un fichier de données du type csv
 
-Datastream est une base de données payante accessible à la BU Dauphine. Elle présente l'avantage de fournir des données complètes. Le séparateur de décimale est le point "."
+2. A partir d'un site internet, ici Yahoofinance (on verra d'autres sites par la suite)
+
+### Option 1 : A partir d'un fichier de données
+
+#### A partir d'un fichier csv provenant de Datastream
+
+Datastream est une base de données payante accessible à la BU Dauphine. Elle présente l'avantage de fournir des données complètes. Le séparateur de colonne est ';'. Le séparateur de décimale est le point "."
 
 ```{r}
-CAC40_df_1<-read.csv2("C:\\users\\ylepen\\Documents\\COURS dauphine\\econometrie II\\data exercice\\cac40_datastream.csv",dec=".",col.names = c('Date','CAC40'))
+CAC40_df_1<-read.csv2("C:\\users\\ylepen\\Documents\\COURS dauphine\\econometrie II\\data exercice\\cac40_datastream.csv",dec='.',col.names = c('Date','CAC40'))
 ```
 
 Autre méthode possible :
@@ -32,63 +38,81 @@ CAC40_df_1<-read.csv2(file=paste0(masource,"cac40_datastream.csv"),dec=".",col.n
 #CAC40_df_1$Date<-as.Date(CAC40_df_1$Date,format = "%d/%m/%y")
 ```
 
-On convertit la colonne Date au format date Year/Month/Day
+On convertit la colonne Date au format Year/Month/Day
 
 ```{r}
 CAC40_df_1$Date<-as.Date(CAC40_df_1$Date,format = "%d/%m/%Y")
-tail(CAC40_df_1$Date)
 
-
+# Autre option possible
 #library(lubridate)
 #CAC40_df_1$Date<-dmy(CAC40_df_1$Date)
 
 ```
 
-On vérifie qu'il n'y a pas de données manquantes
+On vérifie qu'il n'y a pas de données manquantes :
 
 ```{r}
 sapply(CAC40_df_1,function(x) sum(is.na(x)))
 ```
-Les données commencent en "1987-07-09". On décide d'étudier la série à partir de "1990-01-01" en partie pour avoir le même échantillon que les autres sources de données.
+Les données commencent en "1987-07-09". On décide d'étudier la série à partir de "1990-01-01" pour avoir le même échantillon que les autres sources de données.
 
 ```{r}
 CAC40_df_1<-CAC40_df_1[CAC40_df_1$Date>="1990-01-01",]
 ```
+**Rappel** : Les fonctions 
 
-#### à partir d'un fichier csv provenant de Yahoo Finance
-Les données de Yahoo contiennent des données manquantes représentées par le terme ''null''. Avec R, "null" n'est pas le symbole habituel des données manquantes qui est "na". Dans l'importation des données à partir de la fonction read.csv, on ajoute l'option na.strings=c("null") pour lui indiquer que le symbole des données manquantes dans le fichier ^FCHI.csv.
+* class() : affiche la classe d'un objet
+
+* str() : affiche la structure d'un objet
+
+* head() : affiche les premières lignes d'un objet
+
+* tail() : affiche les dernières lignes d'un objet
+
+
+```{r}
+class(CAC40_df_1)
+```
+CAC40_df_1 est un dataframe 
+```{r}
+str(CAC40_df_1)
+```
+CAC40_df_1 contient deux variables avec 9383 observations chacune.
+
+```{r}
+head(CAC40_df_1)
+```
+
+```{r}
+tail(CAC40_df_1)
+```
+
+
+#### A partir d'un fichier csv provenant de Yahoo Finance
+Les données de Yahoo contiennent des données manquantes représentées par le terme ''null''. "na" est le symbole habituel des données manquantes pour R plutôt que "null". On ajoute l'option na.strings=c("null") à la fonction read.csv pour lui indiquer que le symbole des données manquantes dans le fichier ^FCHI.csv 
 
 ```{r}
 library(readr)
 CAC40_df_2<-read.csv("C:\\users\\ylepen\\Documents\\COURS dauphine\\econometrie II\\data exercice\\^FCHI.csv",na.strings=c("null"))
+```
+
+```{r}
 class(CAC40_df_2)
 str(CAC40_df_2)
 ```
+En plus des dates, on dispose de la cotation à l'ouverture, la plus élevée et la plus faible de la journée, à la cloture. Adj.close représente le cours à la cloture ajusté des dividendes. On utilise cette série pour modéliser le CAC40.
 
-Décompte des données manquantes : 
+** Décompte des données manquantes** : 
 
 ```{r}
 sapply(CAC40_df_2,function(x) sum(is.na(x)))
 ```
-Il existe plusieurs manières de gérer les données manquantes. On décide ici de supprimer les dates ayant des données manquantes car elles peuvent empécher l'éxécution de certaines fonctions de R. 
+Les données ont des observations manquantes. Il existe plusieurs manières de gérer les données manquantes. On décide ici de supprimer les dates ayant des données manquantes car elles peuvent empécher l'éxécution de certaines fonctions de R. 
 
 
 ```{r}
 CAC40_df_2<-na.omit(CAC40_df_2)
 sapply(CAC40_df_2,function(x) sum(is.na(x)))
-```
-Rappel : Les fonctions 
-class() : affiche la classe d'un objet
-str() : affiche la structure d'un objet
-head() : affiche les premières lignes d'un objet
-tail() : affiche les dernières lignes d'un objet
-
-```{r}
-class(CAC40_df_2)
-```
-
-```{r}
-str(CAC40_df_2)
 ```
 
 ```{r}
@@ -98,7 +122,7 @@ tail(CAC40_df_2)
 
 ### Option 2 : Importation des données à partir d'un site internet
 
-#### librarie quantmod
+#### Utilisation de la librairie quantmod
 ```{r}
 library(TT)
 library(quantmod)
@@ -114,29 +138,35 @@ CAC40_df<-na.omit(CAC40_df)
 sapply(CAC40_df,function(x) sum(is.na(x)))
 class(CAC40_df)
 ```
-### Utilisation de la librairie yahoofinancer 
-Il existe aussi la librairie yahoofinancer mais elle ne semble pas capable d'importer des données dès qu'elles contiennent des observations manquantes. On importe ici des données mensuelles et non quotidiennes.
+quantmod ne donne pas directement un dataframe mais un objet xts. On le transforme en dataframe, ce qui est plus pratique pour la suite. On supprime les données manquantes.
+
+
+### Utilisation de yahoofinancer 
+Il existe aussi la librairie yahoofinancer mais elle ne semble pas capable d'importer des données dès qu'elles contiennent des observations manquantes. On importe ici des données hebdomadaires plutôt que quotidiennes.
 
 ```{r, echo=TRUE}
 library(yahoofinancer)
 cac40<-Index$new('^FCHI')
-cac40_data<-cac40$get_history(start = '1990-01-01',interval = '1mo')
+cac40_data_wk<-cac40$get_history(start = '1990-01-01',interval = '1wk')
 ```
+interval nous permet de spécifier la fréquence des observations. 
 
 
-
-## Représentation graphique de l'indice CAC40
+## Etude de l'indice CAC40
 On utilise les données importées via quantmod. 
 
 
-
+### Représentation graphique de l'indice CAC40
 ```{r, echo=FALSE}
 library(ggplot2)
-p1<-ggplot(data=CAC40_df,aes(x=Date,y=Adj.Close))+geom_line(colour='blue')+ggtitle('Indice CAC 40 en log')+xlab('date')+ylab('indice en log')+theme_bw()+theme(plot.title = element_text(hjust = 0.5))
+p1<-ggplot(data=CAC40_df,aes(x=Date,y=Adj.Close))+geom_line(colour='blue')+ggtitle('Indice CAC 40')+xlab('Date')+ylab('Indice')+theme_bw()+theme(plot.title = element_text(hjust = 0.5))
 p1
 ```
 
-## Calcul de l'indice en log
+L'évolution de l'indice CAC40 suggère que cette série n'est très probablement pas un processus stationnaire. 
+
+
+### Calcul de l'indice en log
 
 On ajoute l'indice en log au dataframe cac40
 ```{r}
@@ -145,15 +175,35 @@ CAC40_df$logI<-log(CAC40_df$Adj.Close)
 
 ```{r}
 library(ggplot2)
-p<-ggplot(data=CAC40_df,aes(x=Date,y=logI))+geom_line(colour='blue')+ggtitle('Indice CAC 40 en log')+xlab('date')+ylab('indice en log')+theme_bw()+theme(plot.title = element_text(hjust = 0.5))
+p<-ggplot(data=CAC40_df,aes(x=Date,y=logI))+geom_line(colour='blue')+ggtitle('Indice CAC 40 en log')+xlab('Date')+ylab('Indice en log')+theme_bw()+theme(plot.title = element_text(hjust = 0.5))
 p
 ```
 
-## Calcul de l'indice en différence première
+Passer la série en logarithme ne change pas les conclusions précédentes sur la non-stationnarité probable de l'indice CAC40.
 
-On note $I_{t}$ l'indice CAC40, $i_{t}=log(I_{t})$ l'indice en logarithme, alors la différence première de l'indice en logarithme est $i_{t}-i_{t-1}=log(P_{t})-log(P_{t-1})=log(\frac{P{t}}{P_{t-1}})  r_{t}$.
 
-En calculant la différence première, on perd la première observation. On ne peut donc stocker la nouvelle variable créée dans le dataframe précédent. 
+
+### Autocorrélation de l'indice CAC40 (en logarithme)
+
+```{r}
+acf(CAC40_df$logI, lag.max=20, main='Autocorrélogramme de l indice CAC40')
+```
+
+Les autocorrélations sont très proches de 1 et decroissent très peu à mesure que le nombre de décalages augmentent. Ce type d'autocorrélogramme est un indice supplémentaire de la non stationnarité de l'indice CAC40.
+
+```{r}
+pacf(CAC40_df$logI, lag.max=20, main='Autocorrélogramme partiel de l indice CAC40')
+```
+
+L'autocorrélation partielle à l'ordre 1 est très proche de 1, les suivantes sont très proches de 0.
+
+
+
+## Etude du taux de rendement du CAC 40
+
+On note $I_{t}$ l'indice CAC40, $i_{t}=log(I_{t})$ l'indice en logarithme, alors la différence première de l'indice en logarithme est : $$i_{t}-i_{t-1}=log(P_{t})-log(P_{t-1})=log(\frac{P{t}}{P_{t-1}}) = log(1+\frac{P_{t}-P_{t-1}}{P_{t-1}})\simeq  r_{t}$$.
+
+En calculant la différence première, on perd la première observation. On crée un nouveau dataframe contenant la série du taux de rendement avec les dates moins la première.
 
 
 ```{r}
@@ -170,18 +220,24 @@ head(r_CAC40_df)
 
 
 
-
+### Représentation graphique du taux de rendement de l'indice CAC40
 
 ```{r}
-p<-ggplot(data=r_CAC40_df,aes(x=Date,y=rdt))+geom_line(colour='blue')+ggtitle('Indice CAC 40 en log')+xlab('date')+ylab('Rendement CAC40')+theme_bw()+theme(plot.title = element_text(hjust = 0.5))
+p<-ggplot(data=r_CAC40_df,aes(x=Date,y=rdt))+geom_line(colour='blue')+ggtitle('Taux de rendement du CAC40')+xlab('Date')+ylab('Rendement ')+theme_bw()+theme(plot.title = element_text(hjust = 0.5))
 p
 
 ```
 
 ```{r}
-acf(x = r_CAC40_df$rdt,lag.max = 20)
-```
-```{r}
-pacf(x = r_CAC40_df$rdt,lag.max = 20,main='Autocorrelations partielles')
+acf(x = r_CAC40_df$rdt,lag.max = 20, main="Autocorrélogramme du taux de rendement du CAC 40")
 ```
 
+On observe que les autocorrélations estimées sont très proches de 0. Les autocorrélations à l'ordre 3 et 5 sont légèrement significativement différentes de 0.
+```{r}
+pacf(x = r_CAC40_df$rdt,lag.max = 20,main='Autocorrelations partielles du taux de rendement du CAC 40')
+```
+
+Les autocorrélations partielles aux ordres 3 et 5 sont négatives et significativement différentes de 0.
+
+# Conclusion
+ L'indice CAC40 en niveau ou en log semble une série non stationnaire. Par contre le taux de rendement présente l'aspect d'une série stationnaire. De plus, son autocorrélogramme montre que les autocorrélations sont très faibles et peu significatives. 

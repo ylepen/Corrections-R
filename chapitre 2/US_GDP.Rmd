@@ -6,161 +6,241 @@ output:
     df_print: paged
 ---
 
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(warning = FALSE, message= FALSE)
+options(rstudio.help.showDataPreview = FALSE)
+```
 
 # Exercice sur le PIB des Etats-Unis
 
-## Importation et visualisation des données
+## Importation des données
 
-
-On importe les données trimestrielles du taux de chômage aux Etats-Unis du 01/01/1994 au 23/01/01 (117 observations). Les données sont importées du site db.nomics. Les données proviennent du ``Bureau of Labor Statistics''. On leur importe en utilisant leur identifiant ids. 
+On importe les données trimestrielles du PIB des Etats-Unis du 01/01/1947 au 23/01/01 (305 observations). Les données sont importées du site db.nomics. Les données proviennent du \`\`Bureau of Labor Statistics''. On leur importe en utilisant leur identifiant ids.
 
 ```{r}
+rm(list=ls()) 
 library(data.table)
 library(rdbnomics)
 
-df<-rdb(ids = "BLS/ln/LNS13327708Q")
-class(df)
+df<-rdb(ids = "BEA/NIPA-T10106/A191RX-Q")
+#class(df)
 str(df)
 ```
 
-On crée un dataframe contenant uniquement les dates et la série du taux de chômage.
+On crée un dataframe contenant uniquement les dates (colonne period) à partir du premier trimestre de l'année 1990 et la série du PIB (colonne value).
+
 ```{r}
-df_us<-df[,c("period","value")]
-colnames(df_us)<-c('Date','taux')
+df_Y_us<-df[df$period>="1990-01-01",c("period","value")]
+colnames(df_Y_us)<-c('Date','PIB')
 ```
 
 ```{r}
-head(df_us)
+head(df_Y_us)
 ```
-
 
 ```{r}
-tail(df_us)
+tail(df_Y_us)
 ```
-
-Le graphique montre que le taux de chômage aux Etats-Unis fluctue autour de 6\% du début de l'échantillon jusqu'à l'année 2008 à partir de laquelle il augmente très rapidement jusqu'au niveau de 11\%, sous l'effet de la crise des subprimes. On observe aussi l'épisode de la crise du Covid avec une hausse instantanée du taux de chômage autour de 14\% suivie d'un retour rapide à des niveaux très bas. La période du covid peut avoir un impact sur les résultats des tests statistiques. Au vu du graphique, il est assez difficile de trancher sur la stationnarité du taux de chômage.
 
 ```{r}
 library(ggplot2)
-p_us<-ggplot(data=df_us,aes(x=Date,y=taux))+geom_point(color='red')+geom_line(color='red')+xlab('Date')+ylab('Taux de chômage')+ggtitle('Taux de chômage aux Etats-Unis - 1994/01/01 à 2023/01/01')+theme(plot.title = element_text(hjust = 0.5))
+p_us<-ggplot(data=df_Y_us,aes(x=Date,y=PIB))+geom_point(color='red')+geom_line(color='red')+xlab('Date')+ylab('PIB')+ggtitle('PIB aux Etats-Unis - 1990/01/01 à 2023/01/01')+theme(plot.title = element_text(hjust = 0.5))
 p_us
 ```
-## Autocorrélogramme du taux de chômage
+
+Le graphique montre que le PIB augmente de façon tendantielle au cours de la période, avec cependant une baisse de niveau en 2009, due à la grande récession et un creux très prononcé au moment de déclenchement de l'épidémie de COVID. On va exclure dans un premier temps la période du COVID de l'échantillon et l'inclure par la suite pour voir son impact sur les résultats de tests de racine unitaire et de stationnarité.
+
+## Visualisation du PIB en logarithme
+
+On applique la fonction logarithme au PIB. Les tests de racine unitaire et de stationnarité seront appliqués au PIB en logarithme.
 
 ```{r}
-acf_us_rate<-acf(x=df_us$taux,main='Autocorrélogramme du taux de chômage des Etats-Unis')
-acf_us_rate$acf
+
+df_Y_us$logPIB<-log(df_Y_us$PIB)
+library(ggplot2)
+p_us<-ggplot(data=df_Y_us,aes(x=Date,y=logPIB))+geom_point(color='red')+geom_line(color='red')+xlab('Date')+ylab('PIB en log')+ggtitle('PIB en log aux Etats-Unis - 1990/01/01 à 2023/01/01')+theme(plot.title = element_text(hjust = 0.5))
+p_us
 ```
-On observe que l'autocorrélation est supérieure à 0.5 jusqu'à l'ordre 4, ce qui est plutôt élevé. Elle n'est plus significative, pour un risque de première espèce de 5%, à partir de l'ordre 11. L'autocorrélogramme du taux de chômage serait compatible avec celui d'un processus stationnaire. 
-
-```{r}
-pacf(x=df_us$taux,main='Autocorrélogramme partiel du taux de chômage des Etats-Unis')
-```
-Aucune autocorrélation partielle n'est significativement différente de 0. L'autocorrélogramme et l'autocorrélogramme partiel nous suggère que le taux de chômage pourrait être modélisé par un processus AR(p).
-
-
-# Test de Dickey-Fuller augmenté
-
-## Test ADF avec constante et tendance déterministe
-On applique le test ADF avec une tendance déterministe. Le nombre de retards maximum est fixé à 8 et le nombre de retards optimal est déterminé par la minimisation du critère AIC.
-```{r}
-library(urca)
-adf1<-ur.df(y = df_us$taux,type=c("trend"), lag=8, selectlags = c('AIC'))
-summary(adf1)
-```
-La statistique du test ADF est égale à $t_{ADF}=-2.283$. Les seuils de rejet figurent sur la ligne tau3. La statistique de test $t_{ADF}$ est supérieure aux seuils de rejets pour les risques de première espèce de 1\%, 5\% et 10\%. On ne peut pas rejeter l'hypothèse nulle de racine unitaire.
-
-Le t-stat de la tendance déterministe est égal à $t_{\hat{b}} = -0.155$. Le seuil de rejet qui figurent la table de $t_{\hat{b}}$ est égal à 3.14 pour un risque de première espèce de 5\%. on a donc $\vert t_{\hat{b}} \vert = 0.155 <3.14$ : on ne peut pas rejeter l'hypothèse nulle que la tendance déterministe n'est pas significative.
-
-## Test ADF avec constante
-
-```{r}
-adf2<-ur.df(y = df_us$taux,type=c("drift"), lag=8, selectlags = c('AIC'))
-summary(adf2)
-```
-
-a statistique du test ADF est égale à $t_{ADF}=-2.332$. Les seuils de rejet figurent sur la ligne tau3. La statistique de test $t_{ADF}$ est supérieure aux seuils de rejets pour les risques de première espèce de 1\%, 5\% et 10\%. On ne peut pas rejeter l'hypothèse nulle de racine unitaire.
-
-Le t-stat de la constante est égal à $t_{\hat{c}} = 2.170$. Le seuil de rejet de la table de $t_{\hat{c}}$ est égal à 2.86 pour un risque de première espèce de 5\%. on a donc $\vert t_{\hat{c}} \vert = 2.170<2.86$ : on ne peut pas rejeter l'hypothèse nulle que la contante n'est pas significative.
-
-## Test ADF sans constante ni tendance déterministe
-
-```{r}
-adf3<-ur.df(y = df_us$taux,type=c("none"), lag=8, selectlags = c('AIC'))
-summary(adf3)
-```
-La statistique du test ADF est égale à $t_{ADF}=-0.874$. Les seuils de rejet figurent sur la ligne tau3. La statistique de test $t_{ADF}$ est supérieure aux seuils de rejets pour les risques de première espèce de 1\%, 5\% et 10\%. On ne peut pas rejeter l'hypothèse nulle de racine unitaire. On conclut que la série n'est pas stationnaire.
-
-## Conclusion 
-Les résultats des tests ADF nous amènent à conclure que la série du taux de chômage est une série DS sans tendance ni constante. On dit aussi qu'elle est un processus DS sans dérive (drift).
-
-
-
-# Test de stationnarité de KPSS
-
-On applique le test de stationnarité de KPSS. On présente les résultats du test avec une constante. La représentation graphique de la série et les conclusions du test ADF montrent que la taux de chômage ne contient pas de tendance déterministe.
-```{r}
-kpss_mu<-ur.kpss(y=df_us$taux,type="mu",lags="short")
-summary(kpss_mu)
-```
-La statistique du test KPSS avec une constante est égale à $LM_{KPSS} = 0.2578$. Elle est inférieure au seuil de rejet à 5\% : $$ 0.2578<0.436$$ (et aussi à celle à 1%). On ne peut donc pas rejetter l'hypothèse de stationnarité du taux de chômage autour d'une constante. 
-
-
-```{r}
-kpss_tau<-ur.kpss(y=df_us$taux,type="tau",lags="short")
-summary(kpss_tau)
-```
-# Conclusion générale sur les test de racine unitaire et de stationnarité
-On voit que les conclusions des tests ADF et KPSS sont contradictoires en ce qui concerne la stationnarité du taux de chômage. Des études empiriques sur le taux de chômage aux Etats-Unis conclut à la stationnarité du taux de chômage  (Nelson and Plosser, 1982, Perron, 1988, Xiao and Phillips, 1997). On reviendra sur cette question lors l'étude de la modélisation du taux de chômage par un modèle ARMA (chapitre III).
 
 # Tests sans la période Covid
 
 On exclut les observations postérieures au premier semestre de l'année 2020. Les résultats des tests de racine unitaire et de stationnarité ne sont modifiés. On peut dire aussi qu'ils sont robustes à cette modification de la période de test.
-```{r}
-df_us_20Q1=df_us[df_us$Date<"2020-04-01",]
-```
 
+```{r}
+df_Y_us_bc=df_Y_us[df_Y_us$Date<"2020-04-01",]
+```
 
 ## Autocorrélogramme du taux de chômage
 
 ```{r}
-acf_us_rate<-acf(x=df_us_20Q1$taux,main='Autocorrélogramme du taux de chômage des Etats-Unis')
-acf_us_rate$acf
-```
-```{r}
-pacf(x=df_us_20Q1$taux,main='Autocorrélogramme partiel du taux de chômage des Etats-Unis')
+acf_us_rate<-acf(x=df_Y_us_bc$logPIB,main='Autocorrélogramme du PIB (en log) des USA 1990-Q1 à 2023-Q1')
+#acf_us_rate$acf
 ```
 
-## Test de Dickey-Fuller augmenté
+Les autocorrélations sont toutes significatives et proches de 1 pour les premiers décalages. Elles décroissent relativement lentement.
+
+```{r}
+pacf(x=df_Y_us$logPIB,main='Autocorrélations partielles du PIB des USA, 1990-Q1 à 2023-Q1')
+```
+
+Aucune autocorrélation partielle n'est significativement différente de 0. 
+
+# Test de Dickey-Fuller augmenté
+
+## Test ADF avec constante et tendance déterministe
+
 On applique le test ADF avec une tendance déterministe. Le nombre de retards maximum est fixé à 8 et le nombre de retards optimal est déterminé par la minimisation du critère AIC.
+
 ```{r}
 library(urca)
-adf1<-ur.df(y = df_us_20Q1$taux,type=c("trend"), lag=8, selectlags = c('AIC'))
+adf1<-ur.df(y = df_Y_us$logPIB,type=c("trend"), lag=8, selectlags = c('AIC'))
 summary(adf1)
 ```
-La statistique du test ADF est égale à $t_{ADF}=-2.493$. Les seuils de rejet figurent sur la ligne tau3. La statistique de test $t_{ADF}$ est supérieure aux seuils de rejets pour les risques de première espèce de 1\%, 5\% et 10\%. On ne peut pas rejeter l'hypothèse nulle de racine unitaire.
 
-Le t-stat de la tendance déterministe est égal à $t_{\hat{b}} = 0.297$. Le seuil de rejet qui figurent la table de $t_{\hat{b}}$ est égal à 3.14 pour un risque de première espèce de 5\%. on a donc $\vert t_{\hat{b}} \vert = 0.155 <3.14$ : on ne peut pas rejeter l'hypothèse nulle que la tendance déterministe n'est pas significative.
+La statistique du test ADF est égale à $t_{ADF}=-2.085$. Les seuils de rejet figurent sur la ligne tau3. La statistique de test $t_{ADF}$ est supérieure aux seuils de rejets pour les risques de première espèce de 1%, 5% et 10%. On ne peut pas rejeter l'hypothèse nulle de racine unitaire.
+
+Le t-stat de la tendance déterministe est égal à $t_{\hat{b}} = 1.720$. Le seuil de rejet qui figurent la table de $t_{\hat{b}}$ est égal à 3.14 pour un risque de première espèce de 5% et 100 observations. on a donc $\vert t_{\hat{b}} \vert = 1.720 <3.14$ : on ne peut pas rejeter l'hypothèse nulle que la tendance déterministe n'est pas significative.
+
+## Test ADF avec constante
 
 ```{r}
-adf2<-ur.df(y = df_us_20Q1$taux,type=c("drift"), lag=8, selectlags = c('AIC'))
+adf2<-ur.df(y = df_Y_us$logPIB,type=c("drift"), lag=8, selectlags = c('AIC'))
 summary(adf2)
 ```
 
-a statistique du test ADF est égale à $t_{ADF}=-2.498$ les seuils de rejet figurent sur la ligne tau3. La statistique de test $t_{ADF}$ est supérieure aux seuils de rejets pour les risques de première espèce de 1\%, 5\% et 10\%. On ne peut pas rejeter l'hypothèse nulle de racine unitaire.
+a statistique du test ADF est égale à $t_{ADF}=-2.039$. Les seuils de rejet figurent sur la ligne tau3. La statistique de test $t_{ADF}$ est supérieure aux seuils de rejets pour les risques de première espèce de 1%, 5% et 10%. On ne peut pas rejeter l'hypothèse nulle de racine unitaire.
 
-Le t-stat de la constante est égal à $t_{\hat{c}} = 2.377$. Le seuil de rejet de la table de $t_{\hat{c}}$ est égal à 2.86 pour un risque de première espèce de 5\%. on a donc $\vert t_{\hat{c}} \vert = 2.170<2.86$ : on ne peut pas rejeter l'hypothèse nulle que la contante n'est pas significative.
+Le t-stat de la constante est égal à $t_{\hat{c}} = 2.122$. Le seuil de rejet de la table de $t_{\hat{c}}$ est égal à 2.86 pour un risque de première espèce de 5% et T=100 observations. on a donc $\vert t_{\hat{c}} \vert = 2.122<2.86$ : on ne peut pas rejeter l'hypothèse nulle que la contante n'est pas significative.
+
+## Test ADF sans constante ni tendance déterministe
 
 ```{r}
-adf3<-ur.df(y = df_us_20Q1$taux,type=c("none"), lag=8, selectlags = c('AIC'))
+adf3<-ur.df(y = df_Y_us$logPIB,type=c("none"), lag=8, selectlags = c('AIC'))
 summary(adf3)
 ```
-La statistique du test ADF est égale à $t_{ADF}=-0.758$. Les seuils de rejet figurent sur la ligne tau3. La statistique de test $t_{ADF}$ est supérieure aux seuils de rejets pour les risques de première espèce de 1\%, 5\% et 10\%. On ne peut pas rejeter l'hypothèse nulle de racine unitaire. On conclut que la série n'est pas stationnaire.
+
+La statistique du test ADF est égale à $t_{ADF}=5.871$. Les seuils de rejet figurent sur la ligne tau3. La statistique de test $t_{ADF}$ est supérieure aux seuils de rejets pour les risques de première espèce de 1%, 5% et 10%. On ne peut pas rejeter l'hypothèse nulle de racine unitaire. On conclut que la série n'est pas stationnaire.
+
+## Conclusion
+
+Les résultats des tests ADF nous amènent à conclure que le PIB (en log) des Etats-Unis est une série DS sans tendance ni constante. On dit aussi qu'elle est un processus DS sans dérive (drift).
+
+# Test de stationnarité de KPSS
+
+On applique le test de stationnarité de KPSS. On présente les résultats du test avec une tendance déterministe. La représentation graphique du PIB montre que la série pourrait être stationnaire autour d'une tendance déterministe.
+
+```{r}
+kpss_mu<-ur.kpss(y=df_Y_us$logPIB,type="tau",lags="short")
+summary(kpss_mu)
+```
+
+La statistique du test KPSS avec une constante est égale à $LM_{KPSS} = 0.5664$. Elle est supérieure au seuil de rejet à 5% : $$ 0.5664>0.146$$ (et aussi à celle à 1%). On rejette l'hypothèse nulle de stationnarité du taux du PIB autour d'une tendance déterministe.
+
+```{r}
+kpss_tau<-ur.kpss(y=df_Y_us$logPIB,type="mu",lags="short")
+summary(kpss_tau)
+```
+Les résultats des tests de stationarité autour d'une constante montre que l'on rejette également l'hypothèse de stationnarité. 
+
+
+
+# Conclusion générale sur les test de racine unitaire et de stationnarité
+
+Les tests ADF et KPSS rejettent tous la stationnarité du PIB des Etats-Unis. On étudie l'impact de la chute brutale et temporaire du PIB lors du début de l'épidémie de COVID sur les résultats des tests de racine unitaire et de stationnarité.
+
+
+# Test sur la période 1990:Q1 à 2023:Q1
+
+## Autocorrélogramme du taux de chômage
+
+```{r}
+acf_us_rate<-acf(x=df_Y_us$logPIB,main='Autocorrélogramme du PIB des Etats-Unis - 1990:Q1 à 2023:Q1')
+acf_us_rate$acf
+```
+
+```{r}
+pacf(x=df_Y_us$logPIB,main='Autocorrélogramme partiel du PIB des Etats-Unis - 1990:Q1 à 2023:Q1')
+```
+
+## Test de Dickey-Fuller augmenté
+
+On applique le test ADF avec une tendance déterministe. Le nombre de retards maximum est fixé à 8 et le nombre de retards optimal est déterminé par la minimisation du critère AIC.
+
+```{r}
+library(urca)
+adf1<-ur.df(y = df_Y_us$logPIB,type=c("trend"), lag=8, selectlags = c('AIC'))
+summary(adf1)
+```
+
+La statistique du test ADF est égale à $t_{ADF}=-2.085$. Les seuils de rejet figurent sur la ligne tau3. La statistique de test $t_{ADF}$ est supérieure aux seuils de rejets pour les risques de première espèce de 1%, 5% et 10%. On ne peut pas rejeter l'hypothèse nulle de racine unitaire.
+
+Le t-stat de la tendance déterministe est égal à $t_{\hat{b}} = 1.720$. Le seuil de rejet qui figurent la table de $t_{\hat{b}}$ est égal à 3.14 pour un risque de première espèce de 5%. on a donc $\vert t_{\hat{b}} \vert = 1.720 <3.14$ : on ne peut pas rejeter l'hypothèse nulle que la tendance déterministe n'est pas significative.
+
+```{r}
+adf2<-ur.df(y = df_Y_us$logPIB,type=c("drift"), lag=8, selectlags = c('AIC'))
+summary(adf2)
+```
+
+a statistique du test ADF est égale à $t_{ADF}=-2.0388$ les seuils de rejet figurent sur la ligne tau3. La statistique de test $t_{ADF}$ est supérieure aux seuils de rejets pour les risques de première espèce de 1%, 5% et 10%. On ne peut pas rejeter l'hypothèse nulle de racine unitaire.
+
+Le t-stat de la constante est égal à $t_{\hat{c}} = 2.122$. Le seuil de rejet de la table de $t_{\hat{c}}$ est égal à 2.86 pour un risque de première espèce de 5%. on a donc $\vert t_{\hat{c}} \vert = 2.122<2.86$ : on ne peut pas rejeter l'hypothèse nulle que la contante n'est pas significative.
+
+```{r}
+adf3<-ur.df(y = df_Y_us$logPIB,type=c("none"), lag=8, selectlags = c('AIC'))
+summary(adf3)
+```
+
+La statistique du test ADF est égale à $t_{ADF}=5.870$. Les seuils de rejet figurent sur la ligne tau3. La statistique de test $t_{ADF}$ est supérieure aux seuils de rejets pour les risques de première espèce de 1%, 5% et 10%. On ne peut pas rejeter l'hypothèse nulle de racine unitaire. On conclut que la série n'est pas stationnaire.
 
 ### Test de stationnarité de KPSS
 
-On applique le test de stationnarité de KPSS. On présente les résultats du test avec une constante. La représentation graphique de la série et les conclusions du test ADF montrent que la taux de chômage ne contient pas de tendance déterministe. On ne rejette pas l'hypothèse nulle de stationnarité autour d'une constante. 
+On applique le test de stationnarité de KPSS. On présente les résultats du test avec une constante. La représentation graphique de la série et les conclusions du test ADF montrent que la taux de chômage ne contient pas de tendance déterministe. On ne rejette pas l'hypothèse nulle de stationnarité autour d'une constante.
+
 ```{r}
-kpss_mu<-ur.kpss(y=df_us_20Q1$taux,type="mu",lags="short")
+kpss_tau<-ur.kpss(y=df_Y_us$logPIB,type="tau",lags="short")
+summary(kpss_tau)
+```
+On rejette à nouveau l'hypothèse de stationnarité autour d'une tendance déterministe.
+
+```{r}
+kpss_mu<-ur.kpss(y=df_Y_us$logPIB,type="mu",lags="short")
 summary(kpss_mu)
 ```
+On rejette l'hypothèse de stationnarité autour d'une constante.
+
+
+# Etude du PIB en différence première
+
+La différence première du PIB en log correspond à son taux de croissance (voir l'exercice sur le CAC40 pour une explication).
+
+```{r}
+df_gY_us<-data.frame(df_Y_us$Date[-1],diff(df_Y_us$logPIB))
+df_gY_us_y<-data.frame(df_Y_us$Date[-1],4*100*diff(df_Y_us$logPIB))# taux annualisé en %
+colnames(df_gY_us)<-c('Date','gY')
+which.min(df_gY_us$gY)
+```
+```{r}
+tail(df_gY_us)
+```
+
+
+### Représentation graphique du taux de croissance du PIB des Etats-Unis
+
+```{r}
+p<-ggplot(data=df_gY_us,aes(x=Date,y=gY))+geom_line(colour='blue')+ggtitle('Taux de croissance du PIB 1990:T2 à 2023:T1')+xlab('Date')+ylab('gY ')+theme_bw()+theme(plot.title = element_text(hjust = 0.5))
+p
+
+```
+
+Le graphique du taux de croissance du PIB montre trois observations atypiques : la baisse due à la crise de 2008, la baisse encore plus forte due à la crise du COVID et le rebond qui s'en est suivi. 
+```{r}
+acf(x = df_gY_us$gY,lag.max = 20, main="Autocorrélogramme du taux de croissance du PIB, 1990:T2 à 2023:T1")
+```
+
+Aucune des autocorrélations estimées n'est significativement différente de 0.
+```{r}
+pacf(x = df_gY_us$gY,lag.max = 20,main='Autocorrelations partielles du PIB des Etats-Unis, 1990:T2 à 2023:T1')
+```
+
+Aucune des autocorrélations partielles n'est significativement différente de 0.
+

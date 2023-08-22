@@ -1,0 +1,415 @@
+---
+title: "Bulles spéculatives"
+author: "Yannick Le Pen"
+date: "2023-07-25"
+output:
+  pdf_document: default
+  html_document: default
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE,warning = FALSE, message = FALSE)
+```
+
+## Test de détection d'une bulle spéculative de Phillips, Wu et Yu (2011) 
+
+On utilise la libraire exuber plus rapide que les autres librairies disponibles pour ce test.
+
+### Réplication de PWY (2011) sur le NASDAQ
+
+On réplique l'étude de Phillips, Wu et Yu, 2011, Explosive behavior in the 1990s Nasdaq: whend did exuberance escalate asset values?, International Economic Review, 52(1). PWY (2011) vérifient l'existence d'une bulle spéculative sur le [NASDAQ](https://www.investopedia.com/terms/n/nasdaqcompositeindex.asp) qui est l'indice des valeurs technologiques.
+
+Les auteurs collectent trois séries sur Datastream :
+
+1. les valeurs de l'indice Nasdaq Composite
+2. Le NASDAQ composite dividend yield, qui correspond au ratio dividend/prix
+3. l'indice des prix à la consommation
+
+Les données sont mensuelles à partir de juillet 1973 jusqu'à juin 2023 (600 observations). Les données des auteurs couvraient la période février 1973 à juin 2005.
+
+
+#### Importation des données à partir d'un fichier xlsx
+
+```{r}
+install.packages("readxl",repos = "http://cran.us.r-project.org")
+```
+
+```{r}
+rm(list=ls())
+masource <-"C:/Users/ylepen/OneDrive - Université Paris-Dauphine/COURS Dauphine/econométrie II/Corrections R/chapitre 2/"
+library(readxl)
+nasdaq<-read_xlsx(path = paste0(masource,"data_nasdaq.xlsx"),skip=3,sheet = c("nasdaq"))
+colnames(nasdaq)<-c("date","DY","P")
+cpi<-read_xlsx(path = paste0(masource,"data_nasdaq.xlsx"),skip=3,sheet = c("cpi"))
+colnames(cpi)<-c("date","cpi")
+```
+
+
+Les auteurs effectuent les calculs suivants :
+
+1.    Calcul de la série des dividendes = prix $\times$ dividend yield
+2.    Division par l'indice des prix à la consommation pour se ramener en valeur réelle
+3.    Normalisation à 100 de la première observation (juillet 1973) pour l'indice et le dividende.
+
+
+```{r}
+nasdaq$D<-nasdaq$P*nasdaq$DY
+nasdaq$rP<-nasdaq$P/cpi$cpi
+nasdaq$rD<-nasdaq$D/cpi$cpi
+nasdaq$nrP<-100*nasdaq$rP/nasdaq$rP[1]
+nasdaq$nrD<-100*nasdaq$rD/nasdaq$rD[1]
+df<-data.frame(nasdaq[c("date","nrP","nrD")])
+```
+
+On représente les observations sur la totalité de la période. 
+
+```{r}
+library(ggplot2)
+library(reshape)
+df_F<-df
+data_plot<-df_F
+data_melt=melt(as.data.frame(data_plot),id.vars = 1)
+
+p_us<-ggplot(data=data_melt,aes(x=Date))+geom_line(aes(x=date,y=value,color=variable))+
+  scale_y_continuous(
+    name="Axe WTI",
+    sec.axis = sec_axis(~.*0.01,name="Axe gasoline")
+    )+ scale_color_manual(values = c('blue',"red"))+ labs(color = 'Series')
+p_us+labs(y="prix",title = "Valeurs réelles du prix et du dividende du Nasdaq",subtitle = "juin-1986 à juillet-2023")
+```
+
+
+
+#### Etude sur la période juillet 1973 à juin 2005
+
+PWY vérifient l'existence d'une bulle spéculative sur la période 1973-2005, qui comprend la bulle internet des années 1990 (leur échantillon commence en février 1973 mais nous n'avons pas ces observations)
+
+
+```{r}
+df_PWY<-df[df$date<="2005-06-30",]
+```
+
+
+```{r}
+library(ggplot2)
+library(reshape)
+data_plot<-df_PWY
+data_melt=melt(as.data.frame(data_plot),id.vars = 1)
+
+p_us<-ggplot(data=data_melt,aes(x=Date))+geom_line(aes(x=date,y=value,color=variable))+
+  scale_y_continuous(
+    name="Axe Indice",
+    sec.axis = sec_axis(~.*0.01,name="Axe Dividendes")
+    )+ scale_color_manual(values = c('blue',"red"))+ labs(color = 'Series')
+p_us+labs(y="prix",title = "Valeurs réelles du prix et du dividende du Nasdaq",subtitle = "juillet-1973 à juillet-2023")
+```
+
+Le graphique montre qu'à partir du milieu des années 1990 on observe une déconnexion entre l'évolution de l'indice qui croit de manière explosive jusque 2000, et celle des dividendes qui reste stable.  L'évolution de l'indice n'est pas expliquée par celle des dividendes ce qui est interprété comme le signe d'une bulle spéculative. 
+
+On va donc appliquer le test de détection de PWY(2011) aux deux séries. 
+
+### Tests de détection d'une bulle spéculative 
+
+On estime la régression ADF :
+\begin{equation}
+\label{eqn:eq1}
+x_{t} = \mu_{x} + \rho x_{t-1} + \sum_{j=1}^{p} \phi_{j} \Delta x_{t-j} + \epsilon_{x,t}
+\end{equation}
+avec $\epsilon_{x,t} \sim NID(0,\sigma^{2}_{x})$.
+
+On teste l'hypothèse nulle de racine unitaire contre l'hypothèse alternative d'une racine explosive\footnote{On a donc un test unilatéral du coté droit.}
+$$
+\left\lbrace 
+\begin{array}{l}
+H_{0} : \rho =1 \Rightarrow \,racine\,unitaire\\
+H_{1} : \rho>1\, \Rightarrow \,racine\,explosive
+\end{array}
+\right. 
+$$ 
+en faisant des régressions forward sur des fractions $r_{0} \leq r\leq 1$ des observations, on obtient la statistique 
+$SADF(r_{0})=\sup_{r \in [r_{0},1]} ADF_{r}$ où $ADF = \frac{\hat{\rho}-1}{\hat{\sigma}_{\hat{\rho}}}$
+
+
+
+
+
+
+```{r}
+#install.packages("exuber")
+#exuber::install_exuberdata()
+```
+
+#### Test d'une bulle sur les dividendes
+
+PWY(2011) appliquent les tests sur les séries en log. 
+
+Pour faire le test, on doit :
+
+1. indiquer la taille de la fenêtre d'estimation initiale (la fraction $r_{0}$). On laisse la spécification par défaut qui préconise que une fenêtre égale à $(0.01+1.8/\sqrt(T))T$ où $T$ est le nombre d'observations.
+
+
+2. Le nombre de retards dans la régression ADF. Il est préconisé de prendre un nombre de retards égal à 0 ou 1 pour éviter des décisions érronées (risque d'une erreur de première espèce mal contrôlée)
+
+```{r}
+library(urca)
+adf1<-ur.df(y = log(df_PWY$nrD),type=c("drift"), lag=12, selectlags = c('AIC'))
+summary(adf1)
+```
+
+Le critère AIC préconise 1 retard pour la régression ADF, ce qui est compatible avec les valeurs préconisées pour le test SADF. On peut remarquer que ce retard n'est pas singificativement différent de 0. (les résultats demeurent inchangés avec 0 retard).
+
+```{r}
+library(exuber)
+x<-log(df_PWY$nrD)
+psy_minw(x) # taille conseillée de la fenetre d'estimation initiale
+sprintf("La taille conseillée de la fenetre d'estimation initiale %f",psy_minw(x))
+radf_D_PWY <-radf(x,lag=1) # utilise psy_minw(x) comme valeur par défaut
+sprintf("La statistique du test SADF est %f",radf_D_PWY$sadf)
+```
+Pour des échantillons de moins de 600 observations, les seuils critiques sont stockés dans radf_crit. Les seuils critiques dépendent du nombre d'observations de la fenêtre d'estimation initiale. Dans notre cas, la taille de cette fenêtre est égale à 39.
+```{r}
+radf_crit$n39$sadf_cv
+```
+La statistique du test $SADF = -1.574$ est inférieure aux trois seuils de rejet. On ne peut pas rejeter l'hypothèse nulle de racine unitaire contre celle d'une dynamique explosive. 
+
+```{r}
+diagnostics(radf_D_PWY,option = "sadf")
+```
+
+On ne  peut pas rejeter l'hypothèse nulle de racine unitaire. On conclut qui'l n'y a pas eu d'épisode de dynamique explosive sur les dividendes.
+
+#### Test d'une bulle sur l'indice Nasdaq
+
+```{r}
+library(urca)
+adf2<-ur.df(y = log(df_PWY$nrP),type=c("drift"), lag=12, selectlags = c('AIC'))
+summary(adf2)
+```
+Le critère AIC recommande 2 retards.
+
+```{r}
+library(exuber)
+x<-log(df_PWY$nrP)
+radf_P_PWY <-radf(x,lag=2)
+sprintf("La statistique du test SADF est %f",radf_P_PWY$sadf)
+```
+```{r}
+radf_crit$n39$sadf_cv
+```
+La statistique du test $SADF = 2.042$ est supérieur aux trois seuils de rejet. On rejette l'hypothèse nulle de racine unitaire contre celle d'une dynamique explosive pour un risque de première espèce de 1%.
+
+```{r}
+diagnostics(radf_P_PWY,option = "sadf")
+```
+Dès que l'on rejete l'hypothèse nulle de racine unitaire en faveur de l'hypothèse alternative d'une dynamique explosive, on peut déterminer les dates initiale et finale de la bulle. 
+
+On peut fixer la durée mininale d'une bulle, de manière à éviter de sélectionner des périodes trop courtes pas interprétable. La spécification par défaut utilise la fonction psy_ds()
+
+
+```{r}
+sprintf("La longueur minimale d'une bulle est %f",psy_ds(x))
+date_bulle<-datestamp(radf_P_PWY,min_duration = psy_ds(x),option = "sadf")
+date_bulle
+```
+
+
+```{r}
+df_PWY$date[date_bulle$series1$Start[1]]
+df_PWY$date[date_bulle$series1$Peak[1]]
+df_PWY$date[date_bulle$series1$End[1]]
+```
+La bulle est détectée à partir de mai 1997, elle atteint son pic en mars 2000 et se termine en mars 2001. Sa durée est de 46 mois. (A noter : PWY(2011) ne trouvent pas la même date de début de la bulle.)
+
+
+```{r}
+p<-autoplot(radf_P_PWY,option = "sadf",min_duration = psy_ds(x))
+p+ggtitle("Datation de la bulle")
+```
+#### Calcul des seuils critiques
+ 
+On peut aussi recalculer des seuils critiques pour chaque série par des simulations de Monte-Carlo. On prend en compte le nombre d'observations ce qui n'était pas 
+
+```{r}
+x<-log(df_PWY$nrP)
+mc_critical_values <- radf_mc_cv(n=length(x), nrep=1000,seed = 145)
+summary(radf_P_PWY,mc_critical_values)
+```
+
+On utilise les seuils critiques obtenus par simulation pour faire le test. 
+
+```{r}
+diagnostics(radf_P_PWY,mc_critical_values,option = "sadf")
+```
+
+
+#### Datation de la bulle spéculative
+
+```{r}
+date_bulle<-datestamp(radf_P_PWY,cv=mc_critical_values,min_duration = psy_ds(x),option = "sadf")
+date_bulle
+```
+
+
+```{r}
+
+autoplot_x_sadf<-autoplot(radf_P_PWY,option="sadf",cv=mc_critical_values,min_duration = psy_ds(x))+labs(title="Datation de la bulle")
+autoplot_x_sadf
+
+```
+
+
+
+#### Etude sur la période à partir de 2002
+
+
+
+```{r}
+df_PWY_T2<-df[df$date>="2002-01-01",]
+```
+
+
+
+##### Représentation graphique de l'indice et des dividendes
+
+
+```{r}
+library(ggplot2)
+library(reshape)
+data_plot<-df_PWY_T2
+data_melt=melt(as.data.frame(data_plot),id.vars = 1)
+
+p_us<-ggplot(data=data_melt,aes(x=Date))+geom_line(aes(x=date,y=value,color=variable))+
+  scale_y_continuous(
+    name="Axe Indice",
+    sec.axis = sec_axis(~.*0.01,name="Axe Dividende")
+    )+ scale_color_manual(values = c('blue',"red"))+ labs(color = 'Series')
+p_us+labs(y="prix",title = "Valeurs réelles du prix et du dividende du Nasdaq",subtitle = "janvier 2002 à juin-2023")
+```
+
+
+#### Test d'une bulle sur les dividendes
+
+
+```{r}
+library(urca)
+adf1<-ur.df(y = log(df_PWY_T2$nrD),type=c("drift"), lag=12, selectlags = c('AIC'))
+summary(adf1)
+```
+
+
+```{r}
+library(exuber)
+x<-log(df_PWY_T2$nrD)
+radf_D_F <-radf(x,lag=4)
+sprintf("La statistique du test SADF est %f",radf_D_F$sadf)
+diagnostics(radf_D_F,option = "sadf")
+```
+On ne rejette pas l'hypothèse nulle de racine unitaire pour les dividendes
+
+
+```{r}
+library(urca)
+adf1<-ur.df(y = log(df_PWY_T2$nrP),type=c("drift"), lag=12, selectlags = c('AIC'))
+summary(adf1)
+```
+
+
+```{r}
+library(exuber)
+x<-log(df_PWY_T2$nrP)
+radf_P_F <-radf(x,lag=1)
+sprintf("La statistique du test SADF est %f",radf_P_F$sadf)
+diagnostics(radf_P_F,option = "sadf")
+```
+On ne rejette pas non plus l'hypothèse nulle de racine unitaire pour l'indice sur la seconde partie de l'échantillon.
+On n'a pas les preuves statistiques d'une bulle spéculative malgré le comportement de l'indice en 2020 et 2015.
+
+
+```{r}
+x<-log(df_PWY_T2$nrP)
+mc_critical_values <- radf_mc_cv(n=length(x), nrep=1000,seed = 145)
+summary(radf_P_F,mc_critical_values)
+diagnostics(radf_P_F,mc_critical_values)
+
+```
+On ne détecte pas non plus de bulle avec les valeurs critiques calculées par des simulation de Monte-Carlo
+
+
+#### Test de détection de bulles spéculatives sur le prix du  blé 
+
+Etienne, X. L., Irwin, S. H., & Garcia, P. (2014). Bubbles in food commodity markets: Four decades of evidence. Journal of International Money and Finance, 42, 129-155. applique le test de PWY (2011) à la détection de bulles spéculatives sur les marchés des matières premières. Ils utilisent les prix des contrat futures, c'est-à-dire des prix à terme déterminés sur les marchés à terme. On va appiquer le test au prix du blé entre 2000.  On ne dispose que du prix futures et pas de série représentant la valeur fondamentale du blé. 
+
+```{r}
+rm(list=ls())
+masource <-"C:/Users/ylepen/OneDrive - Université Paris-Dauphine/COURS Dauphine/econométrie II/Corrections R/chapitre 2/"
+library(readxl)
+wheat<-read_xlsx(path = paste0(masource,"wheat_futures.xlsx"),skip=3,sheet = c("M"))
+colnames(wheat)<-c("date","P")
+df_wheat_res<-wheat[wheat$date>="2000-01-01" & wheat$date<"2015-01-01",]
+```
+
+
+
+```{r}
+library(ggplot2)
+library(reshape)
+data_plot<-df_wheat_res
+data_melt=melt(as.data.frame(data_plot),id.vars = 1)
+
+p_us<-ggplot(data=data_melt,aes(x=Date))+geom_line(aes(x=date,y=value,color=variable))+
+  scale_y_continuous(
+    name="Axe WTI",
+    sec.axis = sec_axis(~.*0.01,name="Prix")
+    )+ scale_color_manual(values = c('blue',"red"))+ labs(color = 'Series')
+p_us+labs(y="prix",title = "Prix du near month futures contrat sur le blé",subtitle = "janvier-2000 à janvier-2015")
+```
+
+```{r}
+library(urca)
+adf1<-ur.df(y = log(df_wheat_res$P),type=c("drift"), lag=12, selectlags = c('AIC'))
+summary(adf1)
+```
+
+
+
+```{r}
+library(exuber)
+x<-log(df_wheat_res$P)
+#mc_critical_values <- radf_mc_cv(n=length(x), nrep=1000,seed = 145)
+
+radf_WP <-radf(x,lag=1)
+sprintf("La statistique du test SADF est %f",radf_WP$sadf)
+diagnostics(radf_WP,option = "sadf",)
+```
+
+```{r}
+date_bulle<-datestamp(radf_WP,option = "sadf",min_duration = psy_ds(x))
+date_bulle
+```
+
+
+```{r}
+autoplot(radf_WP,option="sadf",min_duration = psy_ds(x))+labs(title=NULL)
+```
+
+
+```{r}
+df_wheat_res$date[date_bulle$series1$Start[1]]
+df_wheat_res$date[date_bulle$series1$Peak[1]]
+df_wheat_res$date[date_bulle$series1$End[1]]
+```
+On détecte la présence d'une bulle spéculative d'une durée de 7 mois entre septembre 2007 et mai 2008.
+
+### Données SP Price dividend ratio
+
+Robert Shiller [website](http://www.econ.yale.edu/~shiller/data.htm)
+
+
+```{r}
+library(MultipleBubbles)
+
+x<-sp_data
+
+plot(x,type='l',col='blue', main = "SP 500 Price dividend ratio jan 1871 to dec 2010")
+
+```

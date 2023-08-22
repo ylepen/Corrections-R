@@ -1,9 +1,9 @@
 ---
 title: "Chapitre II"
 output:
-  pdf_document: default
   html_document:
     df_print: paged
+  pdf_document: default
 ---
 
 ```{r setup, include=FALSE}
@@ -15,7 +15,7 @@ options(rstudio.help.showDataPreview = FALSE)
 
 ## Importation des données
 
-On importe les données trimestrielles du PIB des Etats-Unis du 01/01/1947 au 23/01/01 (305 observations). Les données sont importées du site db.nomics. Les données proviennent du \`\`Bureau of Labor Statistics''. On leur importe en utilisant leur identifiant ids.
+On importe les données trimestrielles du PIB des Etats-Unis du 01/01/1947 au 23/01/01 (305 observations). Les données sont importées du site db.nomics. Les données proviennent du \`\`Bureau of Labor Statistics''. On les importe en utilisant leur identifiant ids.
 
 ```{r}
 rm(list=ls()) 
@@ -227,7 +227,7 @@ tail(df_gY_us)
 ### Représentation graphique du taux de croissance du PIB des Etats-Unis
 
 ```{r}
-p<-ggplot(data=df_gY_us,aes(x=Date,y=gY))+geom_line(colour='blue')+ggtitle('Taux de croissance du PIB 1990:T2 à 2023:T1')+xlab('Date')+ylab('gY ')+theme_bw()+theme(plot.title = element_text(hjust = 0.5))
+p<-ggplot(data=df_gY_us,aes(x=Date,y=gY))+geom_line(colour='blue')+ ggtitle('Taux de croissance du PIB 1990:T2 à 2023:T1') +xlab('Date')+ ylab('gY ')+theme_bw()+theme(plot.title = element_text(hjust = 0.5))
 p
 
 ```

@@ -1,0 +1,242 @@
+---
+title: "Caractérisation du taux de chômage des Etats-Unis "
+author: "Yannick Le Pen"
+date: "2023-07-20"
+output:
+  html_document: default
+  pdf_document: default
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE,warning = FALSE, message = FALSE)
+```
+
+# Importation et des données à partir de DB.nomics
+
+On importe les données trimestrielles du taux de chômage aux Etats-Unis du 1994:T1 au 23:T1 (117 observations) à partir du site [DB.nomics](https://db.nomics.world/BLS ). Les données proviennent du [Bureau of Labor Statistics](https://www.bls.gov/). On les importe en utilisant leur identifiant ids.
+
+```{r}
+rm(list = ls())
+library(data.table)
+library(rdbnomics)
+
+df<-rdb(ids = "BLS/ln/LNS13327708Q")
+str(df)
+```
+
+On crée un dataframe contenant uniquement les dates (colonne "period") et la série du taux de chômage (colonne "value").
+
+```{r}
+df_u<-df[,c("period","value")]
+colnames(df_u)<-c('date','taux')
+head(df_u)
+tail(df_u)
+```
+### Représentation graphique
+
+Le taux de chômage aux Etats-Unis fluctue autour de 6% du début de l'échantillon jusqu'à l'année 2008 à partir de laquelle il augmente très rapidement jusqu'au niveau de 11%, sous l'effet de la crise des subprimes. On observe aussi l'épisode de la crise du Covid avec une hausse instantanée du taux de chômage autour de 14% suivie d'un retour rapide à des niveaux très bas. La période du covid peut avoir un impact sur les résultats des tests statistiques. Au vu du graphique, il est assez difficile de trancher sur la stationnarité du taux de chômage.
+
+```{r}
+library(ggplot2)
+p_us<-ggplot(data=df_u,aes(x=date,y=taux))+geom_point(color='red')+geom_line(color='red')+xlab('Date')+ylab('Taux de chômage')
+p_us+labs(y="prix",title = "Taux de chômage aux Etats-Unis",subtitle = "1994:T1 à 2023:T1")
+```
+# Tests sans la période Covid : 1994:T1 à 2019:T4
+On exclut les observations à partir du premier trimestre de l'année 2020. Les résultats des tests de racine unitaire et de stationnarité ne sont modifiés. On peut dire aussi qu'ils sont robustes à cette modification de la période de test.
+
+```{r}
+df_u_19T1=df_u[df_u$date<"2020-01-01",]
+acf_u_19T1<-acf(x=df_u_19T1$taux,main='Autocorrélogramme du taux de chômage - 1994T1-2019T4')
+pacf(x=df_u_19T1$taux,main='Autocorrélogramme partiel du taux de chômage - 1994T1-2019T4')
+```
+
+**Commentaires**
+
+* Les autocorrélations sont positives et significativement jusqu'au retard 11.
+* Elles sont proches de 1 pour les retards 1, 2, 3, 4, 5 puis décroissent vers 0. On en déduit que le taux de chômage est assez autocorrélé. Néanmoins, il est assez difficile de tirer une conclusions sur la stationnarité ou non-stationnarité du taux de chômage. le profil des autocorrélations pourrait correspondre à une série stationnaire. 
+* Les autocorrélations partielles sont significatives pour les retards 1, 2 et 3
+
+###  Test de Dickey-Fuller augmenté
+
+On utilise la librairie [urca](https://cran.r-project.org/web/packages/urca/index.html) pour faire les tests de racine unitaire.
+
+#### Etape 1 : avec constante et tendance déterministe 
+
+On applique le test ADF avec une constante et une tendance déterministe. Le nombre de retards maximum est fixé à 8 et le nombre de retards optimal est déterminé par la minimisation du critère AIC.
+
+```{r}
+library(urca)
+adf1<-ur.df(y = df_u_19T1$taux,type=c("trend"), lag=8, selectlags = c('AIC'))
+summary(adf1)
+```
+La statistique du test ADF est égale à  $t_{ADF}=-2.229$. Les seuils de rejet figurent sur la ligne tau3. $t_{ADF}=-2.229>-3.43$ pour un risque de première espèce de 5\%. On ne rejette pas l'hypothèse nulle de racine unitaire. La statistique de test $t_{ADF}$  est aussi supérieure aux seuils de rejet pour les risques de première espèce de 1% et 10%. 
+
+Le t-stat de la tendance déterministe est égal à $t_{\hat{b}} =0.006$. Le seuil de rejet qui figure la table de $t_{\hat{b}}$ est égal à 3.14 pour un risque de première espèce de 5%. on a donc  $\vert t_{\hat{b}} \vert =0.006<3.14$ : on ne rejette pas l'hypothèse nulle que la tendance déterministe n'est pas significative.
+
+On passe au modèle avec une constante uniquement.
+
+#### Etape 2 : avec constante
+
+```{r}
+adf2<-ur.df(y = df_u_19T1$taux,type=c("drift"), lag=8, selectlags = c('AIC'))
+summary(adf2)
+```
+
+La statistique du test ADF est égale à  $t_{ADF}=-2.305$. Les seuils de rejet figurent sur la ligne tau3. La statistique de test  
+$t_{ADF} > -2.88$ pour le risque de première espèce de 5% est supérieure : on ne rejette pas l'hypothèse nulle de racine unitaire. On ne rejette pas non plus l'hypothèse nulle de racine unitaire pour les risques de première espèce de 1% et 10%. 
+
+Le t-stat de la tendance déterministe est égal à $t_{\hat{c}}=2.147$. Le seuil de rejet qui figure la table de $t_{\hat{b}}$ est égal à 2.86 pour un risque de première espèce de 5%. on a donc  $\vert t_{\hat{c}} \vert =2.147<2.86$ : on ne rejette pas l'hypothèse nulle que la constante n'est pas significative.
+
+
+#### Sans constante ni tendance déterministe
+
+```{r}
+adf3<-ur.df(y = df_u_19T1$taux,type=c("none"), lag=8, selectlags = c('AIC'))
+summary(adf3)
+```
+
+La statistique du test ADF est égale à  $t_{ADF}=-0.872$. Les seuils de rejet figurent sur la ligne tau3. La statistique de test  
+$t_{ADF}=-0.872>-1.95$  est supérieure au seuil de rejet pour le risque de première espèce de 5% :  on ne rejette pas l'hypothèse nulle de racine unitaire. On ne rejette pas non plus l'hypothèse nulle de racine unitaire pour les risques de première espèces de 1% et 10%.
+
+#### Conclusion sur les résultats de tests ADF
+A l'issus de la séquence des tests ADF  on conclut que la série du taux de chômage est un processus DS sans dérive. 
+
+### Test de stationnarité de KPSS
+
+On applique le test de KPSS. Dans ce cas l'hypothèse nulle est que la série est stationnaire autour d'une tendance déterministe ou autour d'une constante.
+
+Dans la spécification du test kpss :
+
+* type :  sert à spécifier la forme de la composante déterministe (tau = tendance déterministe, mu = constante),
+
+* lags :  sert à spécifier la façon dont le test va corriger l'autoccorélation les résidus. On choisit l'option "long" qui permet de corriger une autocorrélation importante/
+
+#### Test de stationnarité autour d'une tendance déterministe
+
+
+
+```{r}
+kpss_tau<-ur.kpss(y=df_u_19T1$taux,type="tau",lags="long")
+summary(kpss_tau)
+```
+La statistique du test est égale à $LM_{KPSS} = 0.1184$. Le seuil de rejet pour un risque de première espèce est égal à 0.146. On a donc $LM_{KPSS} = 0.1184<0.146$ : on ne rejette pas l'hypothèse de stationnarité autour d'une tendance déterministe. On ne peut rejeter non plus l'hypothèse de stationnarité pour les risques de première espèce de 1% et 10%.
+
+
+#### Test de stationnarité autour d'une constante
+
+
+```{r}
+kpss_mu<-ur.kpss(y=df_u_19T1$taux,type="mu",lags="long")
+summary(kpss_mu)
+```
+La statistique du test est égale à $LM_{KPSS} = 0.1511$. Le seuil de rejet pour un risque de première espèce est égal à 0.463. On a donc $LM_{KPSS} = 0.1511<0.463$ : on ne rejette pas l'hypothèse de stationnarité avec une constante. On ne peut rejeter non plus l'hypothèse de stationnarité pour les risques de première espèce de 1% et 10%.
+
+La représentation graphique suggère que le taux de chômage ne contient pas de tendance déterministe. De plus, Si l'on fait la régression par les MCO 
+du taux de chômage sur une tendance déterministe, le coefficient de la tendance déterministe n'est pas significative
+
+```{r}
+# Regression MOC standard
+model<-lm(df_u_19T1$taux~seq_along(df_u_19T1$taux)) 
+summary(model)
+
+# Estimation des écart type robustes à l'heteroscedasticité et l'autocorrélation
+library(lmtest)
+library(sandwich)
+coeftest(model,vcov. = vcovHAC(model,type="HAC")) 
+```
+# Conclusion générale sur les test de racine unitaire et de stationnarité
+
+On voit que les conclusions des tests ADF et KPSS sont contradictoires en ce qui concerne la stationnarité du taux de chômage. Des études empiriques sur le taux de chômage aux Etats-Unis conclut à la stationnarité du taux de chômage (Nelson and Plosser, 1982, Perron, 1988, Xiao and Phillips, 1997). On reviendra sur cette question lors l'étude de la modélisation du taux de chômage par un modèle ARMA (chapitre III).
+
+
+`
+# Tests sur la période 1994:T1 à 2023:T1
+
+On ajoute maintenant la période du covid qui se caractérise par une explosion temporaire du taux de chômage à des niveaux sans précédent dans l'échantillon. En fin de période, le taux de chômage est revenu à des niveaux comparables à ceux observés avant le covid. L'objectif est voir dans quelle mesure l'inclusion de cette période peut avoir un effet sur les tests de racine unitaire et de stationnarité.
+
+### Autocorrélogramme 
+```{r}
+acf_us_rate<-acf(x=df_u$taux,main='Autocorrélogramme du taux de chômage')
+pacf_us_rate<-pacf(x=df_u$taux,main='Autocorrélogramme du taux de chômage')
+```
+**Commentaires**
+* Pas de changement majeur de l'autocorrélogramme. 
+* Aucune autocorrélation partielle n'est significative
+
+
+### Test de Dickey-Fuller augmenté
+#### Etape 1 : avec constante et tendance déterministe
+
+```{r}
+library(urca)
+adf1<-ur.df(y = df_u$taux,type=c("trend"), lag=8, selectlags = c('AIC'))
+summary(adf1)
+```
+La statistique du test ADF est égale à $t_{ADF}=-2.296$ . Les seuils de rejet figurent sur la ligne tau3. La statistique de test  
+ est supérieure aux seuils de rejet pour les risques de première espèce de 1%, 5% et 10%. On ne peut pas rejeter l'hypothèse nulle de racine unitaire.
+
+Le t-stat de la tendance déterministe est égal à $t_{\hat{b}}=-0.184$. Le seuil de rejet qui figure la table de est égal à 3.14 pour un risque de première espèce de 5%. on a donc   : on ne peut rejeter l'hypothèse nulle que la tendance déterministe n'est pas significative.
+
+## Etape 2 : avec constante
+
+```{r}
+adf2<-ur.df(y = df_u$taux,type=c("drift"), lag=8, selectlags = c('AIC'))
+summary(adf2)
+```
+
+La statistique du test ADF est égale à $t_{ADF}=-2.296$. Les seuils de rejet figurent sur la ligne tau3. La statistique de test  
+$t_{ADF}$  est supérieure aux seuils de rejets pour les risques de première espèce de 1%, 5% et 10%. On ne peut pas rejeter l'hypothèse nulle de racine unitaire.
+
+Le t-stat de la tendance déterministe est égal à $t_{\hat{c}} =2.170$. Le seuil de rejet qui figure la table de $t_{\hat{b}}$ est égal à 2.86 pour un risque de première espèce de 5%. on a donc  $\vert t_{\hat{c}} \vert =2.170<2.86$ : on ne peut rejeter l'hypothèse nulle que la constante n'est pas significative.
+
+## Etape 3 : sans constante ni tendance déterministe
+
+```{r}
+adf3<-ur.df(y = df_u$taux,type=c("none"), lag=8, selectlags = c('AIC'))
+summary(adf3)
+```
+
+La statistique du test ADF est égale à  $t_{ADF}=-0.871$. Les seuils de rejet figurent sur la ligne tau3. La statistique de test  
+$t_{ADF}$  est supérieure aux seuils de rejets pour les risques de première espèce de 1%, 5% et 10%. On ne peut pas rejeter l'hypothèse nulle de racine unitaire.
+
+## Conclusion
+
+Les résultats des tests ADF nous amènent à conclure que la série du taux de chômage est une série DS sans tendance ni constante. Les conclusions des tests ADF ne sont pas modifiés par la période du covid.
+
+# Test de stationnarité de KPSS¶
+
+
+## Stationnarité autour d'une tendance déterministe
+
+```{r}
+kpss_tau<-ur.kpss(y=df_u$taux,type="tau",lags="long")
+summary(kpss_tau)
+```
+La statistique du test KPSS avec une constante est égale à $LM_{KPSS}=0.129$. Elle est inférieure au seuil de rejet à 5% : 0.129<0.146 (et aussi à celle à 1%). On ne peut donc pas rejeter l'hypothèse de stationnarité du taux de chômage avec une tendance déterministe.
+
+
+## Stationnarité autour d'une constante
+
+```{r}
+kpss_mu<-ur.kpss(y=df_u$taux,type="mu",lags="long")
+summary(kpss_mu)
+```
+
+La statistique du test KPSS avec une constante est égale à $LM_{KPSS}=0.136$. Elle est inférieure au seuil de rejet à 5% : 0.136<0.436 (et aussi à celle à 1%). On ne peut donc pas rejeter l'hypothèse de stationnarité du taux de chômage autour d'une constante.
+
+#### Absence de tendance déterministe 
+Pas plus que précédemment, si l'on régresse le taux de chômage sur une constante et une tendance déterministe linéaire, le coefficient de cette dernière variable n'est pas significativement différent de 0.
+```{r}
+library(lmtest)
+model2<-lm(df_u$taux~seq_along(df_u$taux)) # Regression OLS standard
+summary(model2)
+
+coeftest(model2,vcov. = vcovHAC(model2,type="HAC")) # Estimation des écart type robuste à l'heteroscedasticité et l'autocorrélation
+```
+### Conclusion générale
+
+* L'application des tests de racine unitaire ADF et des tests de stationarité KPSS nous donne des résultats contradictoires.
+
+* Ces résultats ne sont pas modifiés par l'ajout de la période covid.
+
+*  En s'appuyant sur les travaux empiriques précédents, on décide de considérer le taux de chômage comme une variable stationnaire et de donc de ne pas le différencier.

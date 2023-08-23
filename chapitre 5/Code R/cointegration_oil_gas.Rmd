@@ -1,0 +1,442 @@
+---
+title: "Cointegration"
+author: "Yannick Le Pen"
+date: "2023-07-11"
+output:
+  pdf_document: default
+  html_document: default
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE,warning = FALSE, message = FALSE)
+rm(list=ls()) # On enlève les objets qui pourraient être présents dans l'environnement.
+```
+
+On étudie les relations entre le prix du pétrole brut et le prix de l'essence aux Etats-Unis. L'essence étant un produit dérivé du pétrole brut, on peut s'attendre à ce que les prix de ces deux produits fluctuent en parallèle. En économie de l'energie la différence entre les deux prix s'appelle le ``[crack spread](https://www.investopedia.com/terms/c/crackspread.asp#:~:text=A%20crack%20spread%20refers%20to,type%20of%20gross%20processing%20margin.)''. Les deux prix peuvent s'éloigner ou se rapprocher temporairement mais avoir un écart stable sur le long terme. La différence entre les deux prix est importante pour la marge de profit des raffineurs. Si les prix sont des processus stationnaires en différence, mesurer le crack spread reviendra à vérifier et estimer l'existence d'une relation de cointégration entre les deux. 
+
+Dans cet exercice, on mesure le crack spreand pour le [WTI](https://www.investopedia.com/terms/w/wti.asp) (West Texas intermediate), qui est le prix de référence du pétrole brut aux Etats-Unis, et le prix de l'essence affiché sur le port de New York (il existe d'autre prix de réference de l'essence). Les données proviennent de l'agence américaine  [EIA](https://www.eia.gov/petroleum/) (Energy Information Agency).
+
+
+# Importation des données à partir d'un fichier .xls
+
+Le fichier des données est en format .xls : on utilise la librairie readxl pour importer les données.
+
+```{r}
+install.packages("readxl",repos = "http://cran.us.r-project.org")
+```
+Les données sont contenues sur plusieurs feuilles dans le fichier excel PET_PRI_SPT_S1_W.xls. Les prix du brut sont dans la feuille Data 1, ceux de l'essence (gasoline) dans la feuille Data 2. Les périodes d'observation ne sont pas exactement les mêmes pour les prix du brut que ceux de l'essence. Les prix pour le WTi sont disponibles de jan/03/1986 à juin/30/2023 (1957 observations). Les prix pour l'essence sont disponibles de juin/06/1986 à juin/30/2023 (1935 observations). Le prix du brut est exprimé en dollars par baril et celui de l'essence en dollars par gallon ( 1 baril = 42 US gallons  = 158.987 litres).
+
+
+```{r}
+masource <-"C:/Users/ylepen/OneDrive - Université Paris-Dauphine/COURS Dauphine/econométrie II/Corrections R/chapitre 5 cointégration/"
+library(readxl)
+oil<-read_xls(path = paste0(masource,"PET_PRI_SPT_S1_W.xls"),skip=2,sheet = c("Data 1"))
+gaso<-read_xls(path = paste0(masource,"PET_PRI_SPT_S1_W.xls"),skip=2,sheet = c("Data 2"))
+```
+
+
+On procède à une jointure à droite des dataframe oil et gaso en se restreignant à la période d'observation de l'essence. 
+```{r}
+library(dplyr)
+join_df<-right_join(oil,gaso)
+colnames(join_df)<-c('Date','WTI','Brent','NYgaso','Gulfgaso')
+str(join_df)
+tail(join_df)
+```
+On choisit d'étudier la relation entre le WTI, prix de référence du pétrole brut aux Etats-Unis, et le prix de l'essence observé au port de New York. Les deux séries sont représentées sur le graphique ci-dessous. Ce graphique montre que :
+
+1. les deux séries ressemblent à des séries non stationnaires,
+2. les deux séries évoluent en parallèle.
+Les évolutions parallèles des prix suggèrent l'existence d'une relation de cointégration.
+
+Le graphique montre également la chute exceptionnelle des prix en 2020 au moment du déclenchement de la crise du covid. 
+
+```{r}
+library(ggplot2)
+library(reshape)
+data_plot=join_df[,c(1,2,4)]
+data_plot$NYgaso=data_plot$NYgaso*100
+data_melt=melt(as.data.frame(data_plot),id.vars = 1)
+
+p_us<-ggplot(data=data_melt,aes(x=Date))+geom_line(aes(x=Date,y=value,color=variable))+
+  scale_y_continuous(
+    name="Axe WTI",
+    sec.axis = sec_axis(~.*0.01,name="Axe gasoline")
+    )+ scale_color_manual(values = c('blue',"red"))+ labs(color = 'Series')
+p_us+labs(y="prix",title = "Prix du WTI et de l\'essence aux Etats-Unis",subtitle = "06-06-1986 à 03-06-2023")
+```
+Pour l'étude empirique, on considère les séries de prix en logarithme. 
+
+```{r}
+join_df$lWTI <-log(join_df$WTI)
+join_df$lNYgaso<-log(join_df$NYgaso)
+
+library(ggplot2)
+library(reshape)
+data_plot=join_df[,c(1,6,7)]
+#data_plot$NYgaso=data_plot$NYgaso*100
+data_melt=melt(as.data.frame(data_plot),id.vars = 1)
+
+p_us<-ggplot(data=data_melt,aes(x=Date))+geom_line(aes(x=Date,y=value,color=variable))+
+  scale_y_continuous(
+    name="Axe WTI",
+    sec.axis = sec_axis(~.*0.01,name="Axe gasoline")
+    )+ scale_color_manual(values = c('blue',"red"))+ labs(color = 'Series')
+p_us+labs(y="prix",title = "Prix (en log) du WTI et de l\'essence aux Etats-Unis",subtitle = "06-06-1986 à 03-06-2023")
+```
+Le graphique montre les évolutions parallèles des deux séries et aussi la chute importante et ponctuelle en mars 2023. On peut se demander quel sera l'impact de cet épisode sur les résultats des tests statistiques. 
+
+
+# Etude de la cointégration en excluant la période du covid 06/06/1986 à 02/28/2020
+
+On exclut les données à partir de mars 2023. 
+
+```{r}
+join_df_short<-join_df[join_df$Date<"2020-03-01",]
+
+```
+
+
+
+```{r}
+library(ggplot2)
+library(reshape)
+data_plot=join_df_short[,c(1,6,7)]
+#data_plot$NYgaso=data_plot$NYgaso*100
+data_melt=melt(as.data.frame(data_plot),id.vars = 1)
+
+p_us<-ggplot(data=data_melt,aes(x=Date))+geom_line(aes(x=Date,y=value,color=variable))+
+  scale_y_continuous(
+    name="Axe WTI",
+    sec.axis = sec_axis(~.*0.01,name="Axe gasoline")
+    )+ scale_color_manual(values = c('blue',"red"))+ labs(color = 'Series')
+p_us+labs(y="prix",title = "Prix (en log) du WTI et de l\'essence aux Etats-Unis",subtitle = "06-06-1986:28-02-2020")
+
+```
+Les deux séries fluctuent en parallèle, il est probable qu'il existe une relation de cointégration elles.
+
+## Caractérisation des deux séries
+
+Dans un premier temps, on vérifie que les deux séries de prix en logarithme sont bien des processus non stationnaire en appliquant le test de Dickey-Fuller augmenté (cf chapitre II). On fixe un nombre de retards maximum de 12 et l'on choisit le nombre de retard optimal par la minimisation du critère AIC.
+
+### Caractérisation du WTI
+
+```{r}
+library(urca)
+adf1<-ur.df(y = join_df_short$lWTI,type=c("trend"), lag=12, selectlags = c('AIC'))
+summary(adf1)
+```
+
+```{r}
+adf2<-ur.df(y = join_df_short$lWTI,type=c("drift"), lag=12, selectlags = c('AIC'))
+summary(adf2)
+```
+
+```{r}
+adf3<-ur.df(y = join_df_short$lWTI,type=c("none"), lag=12, selectlags = c('AIC'))
+summary(adf3)
+```
+En utilisant un risque de première espèce de 5\% pour les tests ADF et les tests sur la composante déterministe, on conclut que le WTI (en log) est  un processus DS sans dérive.
+
+### Caractérisation du prix de l'essence NYgaso
+
+```{r}
+adf1<-ur.df(y = join_df_short$lNYgaso,type=c("trend"), lag=12, selectlags = c('AIC'))
+summary(adf1)
+```
+
+```{r}
+adf2<-ur.df(y = join_df_short$lNYgaso,type=c("drift"), lag=12, selectlags = c('AIC'))
+summary(adf2)
+```
+
+```{r}
+adf3<-ur.df(y = join_df_short$lNYgaso,type=c("none"), lag=12, selectlags = c('AIC'))
+summary(adf3)
+```
+En utilisant un risque de première espèce de 5\% pour les tests ADF et les tests sur la composante déterministe, on conclut que le prix de l'essence (en log) est  un processus DS sans dérive. Les deux séries de prix sont donc des processus DS. Il est donc pertinent de tester l'existence d'une relation de cointégration entre elles.
+
+
+## Test de cointégration de Johansen
+
+### Etape préliminaire : détermination du nombre de retards pour le test de cointégration
+
+On cherche le nombre de retards optimal pour un modèle VAR des variables lWTI et lNYgaso en minimisant des critères d'information multivariés. On fixe à 12 le nombre de retards maximum et l'on inclut une constante dans chaque équation du VAR. On définit un dataframe contenant uniquement les variables pour lesquelles on teste l'existence de la cointégration
+
+
+```{r}
+library(vars)
+df_oil_gaso<- join_df_short[,c('lWTI','lNYgaso')] # on définit un dataframe qui contient les variables pour lesquelles on teste l'existence de la cointégration 
+pselect<-VARselect(y=df_oil_gaso,lag.max=12,type=c("const"))
+
+# Affichage des valeurs des critère de sélection
+#pselect$criteria
+# nombre de retards optimal selon les critères de sélection
+pselect$selection
+```
+Le nombre de retards optimal diffère pour chacun des critères. On décide de prendre 4 retards préconisé par le critère HQ. (Les conclusions du test de cointégration de Johansen sur le nombre de relations de cointégration ne varient pas quand on prend 9 ou 2 retards.)
+
+### Test de cointégration de Johansen
+
+On spécifie le test de cointégration de Johansen :
+
+
+* **ecdet** : spécifie le terme déterministe que l'on ajoute dans le VECM et la relation de cointégration : "none", "const","trend".
+
+    + ecdet = "none" correspond à constante sans restriction (elle n'apparait pas directement dans la relation de cointégration, mais dans la constante du VECM)
+    + ecdet = "const" correspond à constante contrainte (une constante uniquement dans la relation de cointégration)
+    + ecdet = "trend" correspond à tendance contrainte (une tendance uniquement dans la relation de cointégration)
+
+
+* **type** : "trace" pour le test de la trace ou "eigen" pour le test de la valeur propre maximale.
+* **K** =  nombre de retards sélectionné pour le VAR sur les prix
+* **spec** = spécification du VECM. on utilise la spécification "transitory" qui correspond à celle vu en cours
+
+On inclut une constante dans la relation de cointégration :
+
+*  les deux séries sont des processus DS sans dérive
+
+*  il parait raisonnable d'inclure une constante dans la relation de cointégration, d'après le graphique des deux séries.
+
+On fait le test de la trace (type="trace") et le test de la valeur propre maximale (type = "eigen")
+
+#### Test de la trace
+
+
+```{r}
+library(urca)
+oil_gaso.vecm<-ca.jo(df_oil_gaso,ecdet = "const",spec = "transitory",type = 'trace',K=4)
+summary(oil_gaso.vecm)
+```
+
+On commence parl'hypothèse :
+$$\left\lbrace 
+\begin{array}{l}
+H_{0}(0) : r =rang(\Pi)\leq 0\\
+H_{a}(0) : r =rang(\Pi)> 0
+\end{array}
+\right.$$
+La statistique du test de la trace est :
+$$
+Q(0)= -T\sum_{i=1}^{2} ln(1-\hat{\lambda}_{i})=75.66
+$$
+Le seuil de rejet pour un risque de première espèce de 5 \% est égal à  19.96. On a donc $Q(0)=75.66>19.96$  : on rejette donc l'hypothèse nulle $H_{0}(0) : r =rang(\Pi)\leq 0$ que le nombre de relation de cointégration est égal à 0 pour un risque de première espèce $\alpha = 5\%$. On passe aux hypothèses suivantes :
+$$\left\lbrace 
+\begin{array}{l}
+H_{0}(0) : r =rang(\Pi)\leq 1\\
+H_{a}(0) : r =rang(\Pi)> 1
+\end{array}
+\right. $$
+La statistique du test de la trace est :
+$$
+Q(1)= -T ln(1-\hat{\lambda}_{2})=4.16
+$$
+Le seuil de rejet pour un risque de première espèce de 5\% est égal à  9.24. On a donc $Q(1)=4.16<9.24$  : on ne peut pas rejeter l'hypothèse nulle $H_{0}(1) : r =rang(\Pi)\leq 1$ que le nombre de relation de cointégration est égal à 1 pour un risque de première espèce de 5\%. On conclut qu'il existe une relation de cointégration entre lWTI  et lNYgaso.
+
+#### Test de la valeur propre maximale
+
+```{r}
+oil_gaso.vecm_eigen<-ca.jo(df_oil_gaso,ecdet = "const",spec = "transitory",type = 'eigen',K=4)
+summary(oil_gaso.vecm_eigen)
+```
+On commence par l'hypothèse :
+$$
+\left\lbrace 
+\begin{array}{l}
+H_{0} : r = rang(\Pi)= 0\\
+H_{a} : r = rang(\Pi)= 1
+\end{array}
+\right. 
+$$
+La statistique du test de la valeur propre maximale est :
+$$
+Q(0/1)= -T\sum_{i=1}^{1} ln(1-\hat{\lambda}_{i})=71.50
+$$
+Le seuil de rejet du test pour un rique de première espèce de 5\% est $15.67< Q(0/1)=71.50$ : on rejette donc l'hypothèse nulle $H_{0}(0) : r =rang(\Pi)\leq 0$ que le nombre de relations de cointégration est égal à 0 pour un risque de première espèce $\alpha = 5\%$. On passe aux hypothèses suivantes :
+$$
+\left\lbrace 
+\begin{array}{l}
+H_{0}(0) : r =rang(\Pi) = 1\\
+H_{a}(0) : r =rang(\Pi) = 2
+\end{array}
+\right. 
+$$
+La statistique du test de la valeur propre maximale est :
+$$
+Q(1/2)= -T ln(1-\hat{\lambda}_{2})=4.16
+$$
+Le seuil de rejet du test pour un rique de première espèce de 5\% est $9.24> Q(1/2)=4.16$ : on ne peut pas rejeter l'hypothèse nulle $H_{0}(1) : r =rang(\Pi)= 1$ que le nombre de relation de cointégration est égal à 1 pour un risque de première espèce de 5\%. On conclut qu'il existe une relation de cointégration entre lwTI et lNYgaso.
+
+
+## Estimation du VECM
+
+
+On conclut à l'existence d'une relation de cointégration entre lwTI et lNYgaso. On estime le modèle VECM en imposant une relation de cointégration.
+```{r}
+estim_vecm<-cajorls(oil_gaso.vecm,r=1)
+summary(estim_vecm$rlm)
+```
+
+On a les deux équations du VECM :
+
+* lWTI.d désigne la variable lWTI en différence première $lWTI.d = lWTI_{t} - lWTI_{t-1}$. idem pour lNYgaso.d
+* lWTI.dli désigne la variable lWTI.dli décalée de $i$ retards. idem pour lNYgaso.dli
+* ect1 désigne l'écart à la relation de cointégration décalé d'un retard
+
+#### Equation de lWTI.d
+
+* le coefficient (la vitesse d'ajustement) de ect1 est négatif et significatif à 5\%. La relation de cointégration a donc un effet sur la dynamique de lWTI.d. Le signe négatif correspond au signe attendu : quand ect1>0, le prix du brut lWTI en $t-1$ est supérieur à sa valeur de long terme. Le mécanisme à correction d'erreur a tendance à le ramener vers sa valeur de long terme.
+
+* Les coefficients des valeurs retardées de lWTI.di de 1 à 3 sont significatifs au moins à 5\% avec le signe positif pour lWTI.d1 et lWTI.d3 et négatif pour lWTI.d2
+
+* Seul le coefficient de lNYgaso.d2 est significatif et positif.
+
+#### Equation de lNYgaso.d
+
+* le coefficient (la vitesse d'ajustement) de ect1 est positif et significatif à 5\%. La relation de cointégration a donc un effet sur la dynamique de lNYgaso.d. Le signe positif correspond au signe attendu : quand ect1>0, le prix de l'essence lNYgaso en $t-1$ est inférieur à sa valeur de long terme. Le mécanisme à correction d'erreur a tendance à le ramener vers sa valeur de long terme.
+
+* Les coefficients des valeurs retardées de  lWTI.d1 et lWTI.d2 sont significatifs à 5\% avec des signes respectivement positif et négatif. 
+
+* Seul le coefficient de lNYgaso.d1 est significatif et positif.
+
+
+On peut représenter les variables ainsi que la relation de cointégration avec la fonction plot.
+
+```{r}
+plot(oil_gaso.vecm)
+```
+
+On peut représenter les résidus du VECM et leurs autocorrélogrammes.
+
+```{r}
+plotres(oil_gaso.vecm)
+```
+
+## Estimation du VECM avec package tsDyn
+
+
+```{r}
+install.packages("tsDyn",repos = "http://cran.us.r-project.org")
+```
+Le package tsDyn permet aussi d'estimer des modèles VECM en spécifiant la composante déterministe du VECM et de la relation de cointégration. Il permet de specifier 5 modèles :
+
+* include : specification de composante déterministe du VECM, includeLR = specification de la composante déterministe de la relation de cointégration
+
+* pas de constante=> include = none + includeLR =none
+
+* constante non contrainte => include = const + includeLR = none
+
+* constante contrainte => include = none + includeLR = const
+
+* tendance non contrainte => include = both + includeLR = none
+
+* tendance contrainte  => include = none + includeLR = both
+
+```{r}
+library(tsDyn)
+VECM_oil_gaso<-VECM(data=df_oil_gaso,lag=3,r=1,estim = "ML",include="none",LRinclude = "const"  )
+summary(VECM_oil_gaso)
+```
+Le graphique ci-dessous montre la dynamique des deux prix en fonction de la valeur de l'écart à la relation de cointégration ECT. On voit que la variation des prix est telle que ECT revient vers 0. 
+```{r}
+plot_ECT(VECM_oil_gaso, add.legend = TRUE)
+```
+
+
+
+
+# Etude de la cointégration sur la période complète : 06/06/1986 à 06/30/2023
+
+En mars 2020, au début de l'épidémie de covid et du confinement, les prix du pétrole brut et de l'essence ont baissé de manière dramatique. Ces observations constituent des points aberrants (des outliers) qui ne s'expliquent pas par le fonctionnement habituel du marché du pétrole et de ses produits dérivés, mais par un évènement exceptionnel. En faisant baisser le prix, l'épidémie de covid crée une sorte de retour artificiel à la moyenne. En faisant le test de racine unitaire sur toute la période des observations, on risque d'obtenir des résultats plus favorables au rejet de l'hypothèse de racine unitaire. 
+
+## Caractérisation des deux séries
+
+### caractérisation du WTI
+
+```{r}
+adf1<-ur.df(y = join_df$lWTI,type=c("trend"), lag=12, selectlags = c('AIC'))
+summary(adf1)
+```
+On rejette l'hypothèse nulle de racine unitaire pour un risque de première espèce de 10\% 
+```{r}
+adf1<-ur.df(y = join_df$lWTI,type=c("drift"), lag=12, selectlags = c('AIC'))
+summary(adf1)
+```
+
+```{r}
+adf1<-ur.df(y = join_df$lWTI,type=c("none"), lag=12, selectlags = c('AIC'))
+summary(adf1)
+```
+
+### caractérisation du prix de l'essence
+
+```{r}
+adf1<-ur.df(y = join_df$lNYgaso,type=c("trend"), lag=12, selectlags = c('AIC'))
+summary(adf1)
+```
+On rejette l'hypothèse nulle de racine unitaire pour un risque de première espèce de 10\%
+```{r}
+adf1<-ur.df(y = join_df$lNYgaso,type=c("drift"), lag=12, selectlags = c('AIC'))
+summary(adf1)
+```
+
+```{r}
+adf1<-ur.df(y = join_df$lNYgaso,type=c("none"), lag=12, selectlags = c('AIC'))
+summary(adf1)
+```
+
+On rejette l'hypothèse nulle de racine unitaire pour un risque de première espèce de 10 \%. 
+
+On voit que pour les deux prix, on est plus près de rejetter l'hypothèse nulle de racine unitaire dans la spécification avec une tendance déterministe que lorsque l'on exclut la période covid. 
+
+## Test de cointégration de Johansen
+
+### Etape préliminaire : détermination du nombre de retards pour le test de cointégration
+
+On cherche le nombre de retards optimal pour un modèle VAR des variables lWTI et lNYgaso en minimisant des critères d'information multivariés. On fixe à 12 le nombre de retards maximum et l'on inclut une constante dans chaque équation du VAR. On définit un dataframe contenant uniquement les variables pour lesquelles on teste l'existence de la cointégration
+
+
+```{r}
+df_oil_gaso<- join_df[,c('lWTI','lNYgaso')] # on définit un dataframe qui contient les variables pour lesquelles on teste l'existence de la cointégration 
+pselect<-VARselect(y=df_oil_gaso,lag.max=12,type=c("const"))
+
+# Affichage des valeurs des critère de sélection
+#pselect$criteria
+# nombre de retards optimal selon les critères de sélection
+pselect$selection
+```
+Le nombre de retards optimal est plus elevé que si l'on exclut la période covid. On fait le test de cointégration avec 6 retards
+
+#### Test de la trace
+
+```{r}
+oil_gaso.vecm<-ca.jo(df_oil_gaso,ecdet = "const",spec = "transitory",type = 'trace',K=6)
+summary(oil_gaso.vecm)
+```
+
+On conclut à l'existence d'une relation de cointégration. 
+
+#### Test de la valeur propre maximale
+
+```{r}
+oil_gaso.vecm<-ca.jo(df_oil_gaso,ecdet = "const",spec = "transitory",type = 'eigen',K=6)
+summary(oil_gaso.vecm)
+```
+On conclut à l'existence d'une relation de cointégration. Les résultats des tests de cointégration ne sont donc pas modifiés par l'ajout de la période covid. 
+
+## Estimation du VECM
+
+On estime le modèle VECM en imposant une relation de cointégration.
+```{r}
+estim_vecm<-cajorls(oil_gaso.vecm,r=1)
+summary(estim_vecm$rlm)
+```
+
+La vitesse d'ajustement par à l'écart rapport à la relation de cointégration est plus grande (en valeur absolue) pour l'équation du brut lWTI.d que dans le cas où l'on exclut la période covid. 
+
+## Conclusion
+On voit que l'inclusion de la période covid peut avoir un certain impact sur les résultats des tests de racine unitaire, dans le sens d'un rejet de l'hypothèse de racine unitaire, mais a peu d'impact sur les conclusions des tests de cointégration, du moins dans notre exemple. 
+
+
+
+

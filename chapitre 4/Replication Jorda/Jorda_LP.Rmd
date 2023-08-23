@@ -1,0 +1,190 @@
+---
+title: "Replication_Jorda"
+author: "Yannick Le Pen"
+date: "2023-07-20"
+output:
+  pdf_document: default
+  html_document: default
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE,warning = FALSE, message = FALSE)
+rm(list=ls()) # On enlève les objets qui pourraient être présents dans l'environnement.
+```
+
+# Introduction
+
+Jorda (2005, Estimation and Inference of Impulse Responses by Local Projection,  **The American Economic Review**, vol 95(1), pp 161-182.) propose la méthode des projections locales pour calculer les fonctions d'impulsion-réponse.
+
+
+Il illustre sa méthode en revenant sur une question de politique monétaire. L'article de Taylor (1993, Discretion versus Policy Rules. **Carnegie-Rochester Conference Series on Public Policy, 39(0), pp. 195-214) a suscité beaucoup de travaux de recherches sur les règles de taux d'intérêt pour la conduite de la politique monétaire. Ces règles décrivent comment le taux d'intérêt devrait varier en fonction de l'output gap et du taux d'inflation. Le niveau du taux d'intérêt dépend d'un arbitrage entre les niveaux d'activités économiques et le niveau de l'inflation. Pour évaluer l'efficacité et l'optimalité des règles de taux d'intérêt dans le cadre de la politique monétaire, Jord\`{a} étudie la dynamique des relations entre :
+
+
+1.    l'output gap $y_{t}$ mesuré par la différence en pourcentage entre le PIB réel et le PIB potentiel (source the Congressional Budget Office)
+2.    le taux d'inflation $\pi_{t}$ mesuré par le déflateur du PIB en pourcentage annualisé
+3.    le taux d'intérêt $i_{t}$ mesuré par le taux des fonds fédéraux (federal fund rates) en pourcentage annualisé 
+
+
+Jorda dispose de données trimestrielles de 1955-T1 à 2003-I. Ces données sont contenues dans le dataframe interest\_rules\_var\_data du package liprfs de R.
+
+
+
+### Importation des librairies vars et local projection
+```{r}
+library(vars)
+library(lpirfs)
+```
+
+
+
+### Importation des données dans le dataframe endog_data
+```{r}
+endog_data <- interest_rules_var_data
+str(endog_data)
+```
+
+### Fonction impulsion réponse basées sur l'estimation d'un modèle VAR
+
+#### Sélection du nombre de retards optimal 
+
+On determine le nombre de retards du VAR en choisissant un nombre de retards maximum égal à 8 et en introduisant une constante dans le modèle VAR
+
+```{r}
+pselect<-VARselect(y=endog_data,lag.max=8,type=c("const"))
+
+# Affichage des critères de sélection
+# pselect$criteria
+# nombre de retards optimal selon les critères de sélection
+pselect$selection
+```
+
+#### Estimation d'un modèle VAR 
+
+On estime un VAR avec deux retards et une constante
+
+```{r}
+var.2lag <-VAR(y = endog_data,type="const",lag.max = 2)
+summary(var.2lag)
+```
+
+
+### Estimation des functions impulse-response
+
+Les chocs structurels sont déterminés par la méthode de Cholesky avec l'ordre $(y_{t}, \pi_{t}, i_{t})'$ . Jord\'{a} suppose que :
+
+*   un choc sur l'output gap à un effet instantané sur les le taux d'inflation et le taux d'intérêt,
+*   un choc sur le taux d'intérêt n'a pas d'effet instantané sur l'output gap et le taux d'inflation.
+
+L'ordre des variables dans le dataframe correspond bien à celui choisi pour la décomposition de Cholesky.
+
+
+```{r}
+irf_VAR<-irf(var.2lag,n.ahead = 11,ortho = TRUE,ci=0.95)
+plot(irf_VAR)
+```
+
+Dans son article, Jord\'{a} parle de ``**price puzzle**'' pour designer le fait que dans la littérature sur les modèles VAR, on obtient souvent le résultat contre-intuitif que l'inflation augmente suite à un choc sur les taux d'intérêt. 
+
+
+### Estimation des fonctions impulsion réponse par la méthodes des projection locales
+
+#### Spécification 1 : nombre de retards fixe
+
+Jorda estime les projections locales avec un nombre de retards égal à 4 pour toutes horizons et toutes les variables. Chaque choc est l'égal à l'écart type du choc structurel correspondant.
+
+```{r}
+irf_LP_4l <-lp_lin(endog_data = endog_data,
+                     lags_endog_lin = 4,
+                     trend = 0,
+                     shock_type = 0,
+                     confint=1.96,
+                     hor=11)
+```
+
+Les fonctions impulsion réponse figurent ci-dessous
+```{r}
+plot(irf_LP_4l)
+```
+
+#### Spécification 2 : Nombre de retards endogène
+
+Le nombre de retards pour les régressions des projections locales peut varier suivant les horizons et les variables. On considère un nombre de retards maximal égal à 8. Le nombre de retards optimal minimise le critère BIC.
+
+```{r}
+irf_LP <-lp_lin(endog_data = endog_data,
+                    lags_endog_lin = NaN,
+                    lags_criterion = 'BIC',
+                    max_lags = 8,
+                    trend = 0,
+                    shock_type = 0,
+                    confint=1.96,
+                    hor=12)
+
+plot(irf_LP)
+
+```
+`
+
+
+
+```{r}
+# Affichage des irf 
+irf_LP_4l$irf_lin_mean
+```
+
+
+### Comparaison graphique : Effet d'un choc sur le taux d'intéret
+
+On peut comparer les impulsions-réponses obtenues par les deux méthodes. On regarde les impulsions-réponses dans le cas d'un choc sur les taux d'intérêt qui présentent des différences selon la méthode d'estimation. On ne reporte pas les intervalles de confiance ce qui limite la portée des conclusions cependant.
+
+*   irf_LP_4l$irf_lin_mean contient les IRF estimées à partir de la méthode de projection locate avec 4 retards.
+*   irf_lin_mean[1,,3] contient les IRF d'un choc sur le taux d'intérêt sur l'output gap
+
+*   irf_VAR$irf $ FF contient les IRF suite à un choc sur le taux d'intérêt
+*   irf_VAR$irf $ FF[,1] contient les IRF de l'output gap suite à un choc sur le taux d'intérêt
+
+```{r}
+comp_irf<-data.frame(h=seq(1,12),irf_LP_4l$irf_lin_mean[1,,3],irf_VAR$irf$FF[,1])
+colnames(comp_irf)<-c('h','LP','VAR')
+
+
+library(ggplot2)
+library(reshape2)
+
+df_comp<-melt(comp_irf,id.var='h')
+p<-ggplot(df_comp,aes(x=h,y=value,col=variable))+geom_line()+
+scale_x_discrete(limits=comp_irf$h)
+p+labs(title = "Projection locale (4 retards) versus VAR",subtitle = "Effet d'un choc sur le taux sur l\'output gap")
+```
+
+On voit que l'IRF obtenue avec le modèle VAR a tendance a sous-estimer l'effet d'un choc sur le taux d'intérêt sur le PIB.
+
+```{r}
+comp_irf<-data.frame(h=seq(1,12),irf_LP_4l$irf_lin_mean[2,,3],irf_VAR$irf$FF[,2])
+colnames(comp_irf)<-c('h','LP','VAR')
+
+
+library(ggplot2)
+library(reshape2)
+
+df_comp<-melt(comp_irf,id.var='h')
+p<-ggplot(df_comp,aes(x=h,y=value,col=variable))+geom_line()+
+scale_x_discrete(limits=comp_irf$h)
+p+labs(title = "Projection locale (4 retards) versus VAR",subtitle = "Effet d'un choc sur le taux sur l'inflation")
+```
+
+On voit que les deux IRF sont très proches jusqu'à h=7. Après cette date, l'IRF obtenue par la projection locale devient négative tandis que celle obtenue par le VAR reste positive. L'IRF par projection locale est plus proche de ce que l'on peut anticiper de l'effet d'une hausse des taux sur l'inflation. 
+
+```{r}
+comp_irf<-data.frame(h=seq(1,12),irf_LP_4l$irf_lin_mean[3,,3],irf_VAR$irf$FF[,3])
+colnames(comp_irf)<-c('h','LP','VAR')
+
+
+library(ggplot2)
+library(reshape2)
+
+df_comp<-melt(comp_irf,id.var='h')
+p<-ggplot(df_comp,aes(x=h,y=value,col=variable))+geom_line()+
+scale_x_discrete(limits=comp_irf$h)
+p+labs(title = "Projection locale (4 retards) versus VAR",subtitle = "Effet d'un choc sur le taux sur le taux")
+```

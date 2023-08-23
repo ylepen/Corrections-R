@@ -1,0 +1,519 @@
+---
+title: "Modèle VAR stationnaire : revenu disponible et consommation des ménages aux
+  Etats-Unis"
+author: "Yannick Le Pen"
+date: "2023-24"
+output:
+  pdf_document: default
+  html_document: default
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(warning = FALSE, message= FALSE)
+options(rstudio.help.showDataPreview = FALSE)
+```
+
+On utilise un modèle VAR pour étudier les relations entre le taux de croissance du revenu disponible et le taux de croissance de la consommation des ménages aux Etats-Unis. On importe des données réelles, désaisonnalisées et trimestrielles à partir du site [DB.nomics](https://db.nomics.world/). 
+
+On verra successivement :
+
+1. l'estimation d'un modèle VAR
+2. les tests de causalité au sens de Granger
+3. l'analyse impulsion réponse
+4. la prévision
+
+De plus, on étudiera l'impact de l'inclusion de la période covid sur les estimations et comment essayer de prendre en compte cette période particulière. 
+
+# Importation des données depuis DB.nomics
+
+```{r}
+rm(list=ls()) 
+library(data.table)
+library(rdbnomics)
+
+# données sur le revenu disponible réel
+data_inc<-rdb(ids = "BEA/NIPA-T20100/A067RX-Q") 
+
+# données sur les dépenses de consommation personnelles en volume
+data_cons<-rdb(ids = "BEA/NIPA-T10106/DPCERX-Q") 
+
+# données sur le revenu disponible réel excluant les transfets sociaux
+data_inc_wt<-rdb(ids = "BEA/NIPA-T20100/W875RX-Q") 
+```
+
+On sélectionne les dates et les séries pour le revenu et la consommation qui sont fusionnées dans un seul dataframe. On conserve les données à partir de "1990-01-01".
+```{r}
+df_inc<-data_inc[,c("period","value")]
+colnames(df_inc)<-c("date","income")
+df_cons<-data_cons[,c("period","value")]
+colnames(df_cons)<-c("date","consumption")
+df<-merge(df_inc,df_cons,by="date")
+df<-df["1980-01-01"<=df$date,]
+```
+
+Les deux séries sont représentées sur le graphique ci-dessous. Les deux séries augmentent à un rythme régulier et en parallèle de 1990 à 2008. Les années 2008 et 2009 sont marquées par une baisse des deux séries, plus grande pour la consommation. Les deux séries connaissent ensuite une hausse régulière, à un rythme moins élevé qu'avant 2008, jusqu'au déclenchement de l'épidémie de covid au début de l'année 2020. On observe alors
+une forte baisse temporaire de la consommation des ménages, qui retrouve ensuite son rythme de croissance. En raison des transferts sociaux aux ménages, le revenu disponible augmente fortement à deux reprises. 
+```{r}
+library(ggplot2)
+library(reshape2)
+data_melt=melt(as.data.frame(df),id.vars = 1)
+
+p_us_T<-ggplot(data=data_melt,aes(x=date))+geom_line(aes(x=date,y=value,color=variable))
+p_us_T+labs(y="niveau",title = "Revenu et consommation des ménages aux Etats-Unis",
+            subtitle = "1990:T1 à 2023:T1")
+
+```
+
+
+
+# Etude sur la période avant covid : 1990:T1 à 2019:T4
+
+En raison de la spécificité de la période du covid, on se limite dans un premier temps à la période 1990:T1 à 2020:T1.
+
+```{r}
+df_short<-df["1990-01-01"<=df$date & df$date<"2020-01-01",]
+```
+
+```{r}
+data_melt=melt(as.data.frame(df_short),id.vars = 1)
+
+p_us<-ggplot(data=data_melt,aes(x=date))+geom_line(aes(x=date,y=value,color=variable))
+p_us+labs(y="niveau",title = "Revenu et consommation des ménages aux Etats-Unis",
+          subtitle = "1990:T1 à 2019:T4")
+```
+
+## Taux de croissance du revenu disponible et de la consommation
+
+On calcule les taux de croissance comme la différence première de variables en logarithme.
+
+```{r}
+df_g_short<-data.frame(df_short$date[-1],diff(log(df_short$income)),diff(log(df_short$consumption))) 
+# on perd une observation en calculant le taux de croissance
+colnames(df_g_short)<-c("date","g_inc","g_cons")
+```
+
+```{r}
+data_melt=melt(as.data.frame(df_g_short),id.vars = 1)
+
+p_g_us<-ggplot(data=data_melt,aes(x=date))+geom_line(aes(x=date,y=value,color= variable))
+p_g_us+labs(y="taux",title = "Variation du revenu et de la consommation des ménages aux Etats-Unis",
+            subtitle = "1990:T1 à 2019:T4")
+```
+
+#### Statistiques descriptives
+
+```{r}
+summary(df_g_short[c("g_inc","g_cons")])
+sapply(df_g_short[c("g_inc","g_cons")],sd)
+```
+Les statistiques descriptives montrent que les moyennes des deux taux de croissance sont quasiment égales. Le taux de croissance du revenu est plus variable que celui de la consommation, comme le montrent les écarts types, les maxima et minima.
+
+
+La corrélation entre les deux taux de croissance est égale à 0.28 et significative. 
+
+```{r}
+cor.test(df_g_short$g_inc,df_g_short$g_cons)
+```
+```{r}
+acf(df_g_short$g_inc,main="Autocorrelogramme du taux de croissance du revenu disponible")
+```
+```{r}
+acf(df_g_short$g_cons,main="Autocorrélogramme du taux de croissance de la consommation")
+```
+
+
+## Modélisation VAR
+
+On utilise la librairie "vars" pour estimer le modèle VAR.
+
+### Sélection du nombre de retards optimal 
+
+On commence par déterminer le nombre de retards par l'application de critères d'information multivariés. On doit spécifier :
+
+* lag.max = nombre maximal de retards
+* type = forme de la composante déterministe "const", "trend","both" ou "none (1 seule spécification possible)
+
+On choisit un nombre de retards maximum égal à 8 (correspond à deux années de recul pour des données trimestrielles) et l'on estime un modèle VAR avec une constante (la moyenne des taux de croissance n'est pas nulle.)
+
+```{r}
+library(vars)
+pselect<-VARselect(y=df_g_short[,c(2,3)],lag.max=8,type=c("const"))
+pselect$criteria # Affichage des valeurs des critère de sélection
+pselect$selection # nombre de retards optimal selon les critères de sélection
+```
+Le nombre de retard optimal varie selon le critère :
+
+* le critère AIc préconise 4 retards,
+* le critère HQ préconise 2 retards,
+* le critère SC préconise 1 retard,
+* le nombre de retards optimaux sont néanmoins inférieurs à lag.max
+
+Le critère AIC est connu pour surestimer le nombre de retards. On décide d'estimer le modèle VAR avec 1 retard.
+
+
+### Estimation d'un modèle VAR(1)
+```{r}
+var.1lag <-VAR(y = df_g_short[,c("g_inc","g_cons")],type="const",lag.max = 1)
+summary(var.1lag) #Affichage des résultats avec summary
+```
+
+
+```{r}
+serial.test(var.1lag, lags.pt = 10, type = "PT.adjusted")
+```
+**Commentaires des résultats**
+
+g_inc.li et g_cons.li représentent respectivement g_inc et g_cons avec un retard de i périodes.
+
+
+* Equation du taux de croissance g_inc
+    * le coefficient de g_inc.l1 est significatif et négatif pour un risque de première espèce de 1\% : on a tendance à observer une alternance d'accéleration et de ralentissement du taux de croissance trimestriel du revenu disponible.
+    * le coefficient de g_cons.l1 est positif et significatif pour un risque de première espèce 1\%, 
+    * la constante est significative pour un risque de première espèce de 1\%.
+    * le $R^{2}$ est égal à 15\%. 
+    
+* Equation du taux de croissance g_cons
+    * le coefficient de g_inc.l1 est positif et significatif pour un risque de première espèce de 1\% ; une accélération de la croissance du revenu disponible a pour effet d'accélérer la croissance de la consommation
+    * le coefficient de g_cons.l1 est positif et significatif pour un risque de première espèce 1\% : le taux de croissance de la consommation est positivement corréle à sa valeur passée
+    * la constante est significative pour un risque de première espèce de 1\%,
+    * le $R^{2}$ est égal à 24\% : le pouvoir explicatif de la régression est plus important que pour g_inc
+  
+
+
+On peut afficher les graphiques des valeurs ajustées et des résidus pour chaque variables du VAR.
+
+
+```{r}
+#par(mar=c(1, 1, 1, 1))
+#plot(var.1lag)
+```
+
+
+#### Affichage des racines du polynôme caractéristique
+On étudie la stationnarité du VAR. La fonction roots renvoie les module des inverses des racines du polynôme caractéristique.
+```{r}
+roots(var.1lag)
+```
+Les inverses des racines sont de module strictement inférieur à 1 : la condition de stationnarité est donc satisfaite.
+
+
+#### Affichage de résultats
+
+l'objet var.1lag contient les résultats du VAR auxquels on peut avoir accès en spécifiant leur nom. 
+
+* **Exemple 1 : Liste des matrices des coefficients estimés du VAR**
+```{r}
+A<-Acoef(var.1lag)
+A
+```
+* **Exemple 2 : Variable ajustée du taux de croissance du revenu g_inc**
+
+
+```{r}
+plot(var.1lag$varresult$g_inc$fitted.values,type='line',col='blue')
+```
+
+
+### Test de causalité au sens de Granger
+
+
+#### Causalité de la consommation sur le revenu 
+On vérifie la significativité du coefficient de $g\_conso_{t-1}$ dans l'équation de $g\_income_{t}$. Les hypothèses du test sont :
+
+$$
+\left\lbrace 
+\begin{array}{l}
+H_{0} : a_{12}^{1}=0\Rightarrow\,g\_conso\,\mathrm{ne\,cause\,pas}\,g\_income\\
+H_{a} : a_{12}^{1}\neq 0 \Rightarrow\,g\_conso\,\mathrm{cause}\,g\_income
+\end{array}
+\right. 
+$$
+où $a_{12}^{1}$ est le coefficient de la ligne 1 et colonne 2 de $A$. Les résultats du test figurent ci-dessous :
+
+```{r}
+causality(var.1lag,cause=c('g_cons'))
+
+```
+Les seuils critiques sont tirés d'une loi $F(1,224)$ :
+
+\begin{table}[htbp]
+\centering
+\begin{tabular}{|c|c|c|}
+\hline 
+$\alpha$ & 5\%& 10\% \\ 
+\hline 
+$f_{1-\alpha}(1,+\infty)$& 2.99 & 4.60 \\ 
+\hline 
+\end{tabular} 
+\end{table}
+
+La statistique de test égale à 5.93 est supérieure au seuil critique pour $\alpha=1\%$. On rejette donc l'hypothèse nulle d'absence de causalité du taux de croissance de la consommation sur le taux de croissance du revenu. La probabilité critique du test est égale à 0,00\% ce qui amène aux mêmes conclusions.  
+
+
+#### Causalité du revenu sur la consommation
+
+
+On teste si le taux de croissance du revenu ``cause'' le taux de croissance de la consommation au sens de Granger. 
+
+On vérifie la significativité du coefficient de $g\_income_{t-1}$ dans l'équation de $g\_consumption_{t}$. Les hypothèses du test sont :
+$$
+\left\lbrace 
+\begin{array}{l}
+H_{0} : a_{21}^{1}=0\Rightarrow\,g\_income\,\mathrm{ne\,cause\,pas}\,g\_consumption\\
+H_{a} : a_{21}^{1}\neq 0 \Rightarrow\,g\_income\,\mathrm{cause}\,g\_consumption
+\end{array}
+\right. 
+$$
+où $a_{21}^{1}$ est le coefficient de la ligne 2 et colonne 1 de $A_{1}$. Les résultats du test figurent ci dessous :
+
+```{r}
+causality(var.1lag,cause=c('g_inc'))
+```
+
+
+La statistique de test égale à 2.58  est supérieure aux seuils critiques. On rejette donc l'hypothèse nulle d'absence de causalité du taux de croissance du revenu sur le taux de croissance de la consommation pour un risque de première espèce de 5\%. La probabilité critique du test est égale à 0.020 ce qui amène aux mêmes conclusions. 
+
+#### Conclusion 
+On observe que le taux de croissance de la consommation le taux de croissance du revenu au sens de Granger et réciproquement. La causalité s'exerce dans ls deux sens et l'on parle alors d'**effet feedback**.
+ 
+## Fonctions impulsion-réponse
+
+Comme chacune des deux variables du VAR cause l'autre, les tests de causalité au sens de Granger ne permette pas de dégager un ordre de classement des variables. Néanmoins on peut raisonnablement penser que les chocs sur le taux de croissance du revenu impactent instantanément le taux de croissance de la consommation plutôt que l'inverse. On décide de ``placer'' le taux de croissance du revenu g_income en première ligne et le taux de croissance de la consommation g\_conso en seconde position.
+
+On calcule les fonctions impulsion réponse :
+
+* var.1lag : objet 
+* n.ahead : nombre de périodes futures pour lesquelles on calcule les impulsion réponse
+* ortho = TRUE : on applique la décomposition de Cholesky
+* ci = 0.95 : on représente les bornes de l'intervalle de confiance à 95 \% pour déterminer la significativité des IRF.
+
+Les chocs sont égaux à 1 écart type du choc structurel. 
+
+**Important**
+
+*   En spécifiant les variables du VAR(1) on a écrit var.1lag <-VAR(y = df_g_short[,c("g_inc","g_cons")],type="const",lag.max = 1) : ceci implique que la variable située en première ligne est g_inc et celle en seconde position g_cons. 
+
+*   Si l'on souhaitait mettre g_cons en première ligne, il faudrait écrire
+
+var.1lag <-VAR(y = df_g_short[,c("g_cons","g_inc")],type="const",lag.max = 1)
+
+```{r}
+irf<-irf(var.1lag,n.ahead = 12,ortho = TRUE,ci=0.95)
+plot(irf)
+```
+
+* Effet d'un choc sur g_inc :
+**        un effet immédiat, positif et significatif sur le taux de croissance de la consommation jusqu'au second trimestre.
+
+* Effet d'un choc sur g_cons :
+**    pas d'impact immédiat sur le taux de croissance du revenu disponible,
+**    un effet positif sur le revenu pour le trimestre suivant (à l'horizon h=1)
+
+### Estimation des IRF par les projections locales
+
+On estime les IRF par la méthode des projections locales. On spécifie les paramètres suivants :
+
+* le nombre d'horizon est égal à 12 
+* Pour chaque horizon $h=1,...,12$, le nombre de retards dans la régression de la projection locale sera au plus égal à 8 (max_lags = 8) et choisi par la minimisation du critère BIC
+* on applique des chocs égaux à 1 écart type du choc structurel : shock_type = 0. (shock_type =1 pour des chocs )
+* Intervalle de confiance à 95\% (confit=1.96) (confit = 1.65 pour un intervalle de confiance à 90% et confit=1 pour un intervalle de confiance à 68\%)
+
+```{r}
+library(lpirfs)
+irf_LP <-lp_lin(endog_data = df_g_short[, c(2, 3)],
+                    lags_endog_lin = NaN,
+                    lags_criterion = 'BIC',
+                    max_lags = 8,
+                    trend = 0,
+                    shock_type = 0,
+                    confint=1.96,
+                    hor=12,
+                    adjust_se=TRUE)
+
+plot(irf_LP)
+```
+** Commentaires**
+
+* impact d'un choc sur g_inc : peu de différence avec les fonctions obtenues à partir du VAR(1) (graphiques du haut)
+
+* impact d'un choc sur g_cons :
+    * l'impact du choc est plus durable sur g_inc
+    * l'impact du choc est aussi plus durable sur g_cons 
+    * Explication possible : les fonctions impulsion réponse sont estimées en déterminant de façon endogène le nombre de retards pour chaque horizon.
+
+
+On peut afficher les valeurs de fonctions impulsion-réponse pour les chocs sur g_inc (variable 1 du dataframe)
+
+```{r}
+irf_LP$irf_lin_mean[,,1]
+```
+On peut afficher les valeurs de fonctions impulsion-réponse pour les chocs sur g_cons (variable 2 du dataframe)
+
+```{r}
+irf_LP$irf_lin_mean[,,2]
+```
+L'affichage ci-dessous montre que le nombre de retards optimal inclus dans la projection locale varie selon la variable l'horizon, la variable qui subit un chocs et celle dont on étudie la dynamique.
+
+```{r}
+  irf_LP$specs$chosen_lags
+```
+
+
+
+### Décomposition de la variance
+ 
+```{r}
+dec_var <-fevd(var.1lag,n.ahead=20) 
+ 
+plot(dec_var) 
+```
+ 
+## Calcul des prévisions
+
+On calcule les prévisions pour les 10 observations suivantes à partir du VAR(1)
+
+```{r}
+forecast<-predict(var.1lag,n.ahead = 10, ci=0.95)
+
+summary(forecast)
+plot(forecast)
+
+```
+
+
+## Ajout d'une variable indicatrice en 2013:T1
+Sur le graphique des taux de croissance, on observe une valeur atypique pour le premier trimestre de 2013. CEtte baisse s'explique par des causes particulières liées à la distribution des salaires et des dividences en décembre 2012 et aux contributions des employés aux assurances sociales [cf BEA](https://www.bea.gov/news/2013/personal-income-and-outlays-january-2013). On introduit une variable indicatrice pour prendre en compte cette observation particulière.
+
+```{r}
+library(vars)
+df_g_short$dummy_2013T1<-as.numeric(df_g_short$date=="2013-01-01")
+pselect<-VARselect(y=df_g_short[,c(2,3)],lag.max=8,type=c("const"),exogen = df_g_short$dummy_2013T1)
+pselect$criteria # Affichage des valeurs des critère de sélection
+pselect$selection # nombre de retards optimal selon les critères de sélection
+```
+
+On obtient des résultats similaires à ceux du cas sans indicatrice.
+
+#### Estimation du VAR(1) avec l'indicatrice pour 2013:T1
+```{r}
+var.1lag_wd <-VAR(y = df_g_short[,c(2,3)],type="const",lag.max = 1,exogen = df_g_short$dummy_2013T1)
+summary(var.1lag_wd) #Affichage des résultats avec summary
+```
+
+* La variable indicatrice est négative et significative dans l'équation de g_inc. Elle n'est pas significative dans l'équation de g_conso, ce qui était attendu
+* Les valeurs des coefficients de l'équation de g_inc sont un peu modifiés mais ne changent pas de signe
+* le $R^{2}$ de l'équation de g_inc augmente et passe à 32\%
+
+#### Tests de causalité et fonctions impulsion-réponse
+
+Il n'y a pas de modification des résultats des tests de causalité ni des fonctions impulsion réponse.
+
+```{r}
+causality(var.1lag_wd,cause=c('g_inc'))
+```
+
+```{r}
+causality(var.1lag_wd,cause=c('g_cons'))
+```
+
+```{r}
+irf2<-irf(var.1lag_wd,n.ahead = 12,ortho = TRUE,ci=0.95)
+plot(irf2)
+```
+**Commentaires**
+
+Peu de différences avec les impulsions-réponses précédentes sans la variable indicatrice. 
+
+# Etude sur la période 1990:T1 à 2023:T1
+
+## Calcul et représentation des taux de croissance
+
+```{r}
+df_g<-data.frame(df$date[-1],diff(log(df$income)),diff(log(df$consumption)))
+colnames(df_g)<-c("date","g_inc","g_cons")
+```
+
+```{r}
+library(ggplot2)
+library(reshape)
+data_melt=melt(as.data.frame(df_g[c(1,2,3)]),id.vars = 1)
+
+p_g_us<-ggplot(data=data_melt,aes(x=date))+geom_line(aes(x=date,y=value,color= variable))
+p_g_us+labs(y="taux",title = "Variation du revenu et de la consommation des ménages aux Etats-Unis",subtitle = "1990:T1 à 2023:T1")
+
+```
+Le graphique des taux de croissance montre que les observations allant du premier trimestre de 2020 au second semestre de 2021 sont atypiques par le niveau des taux de croissance à la hausse comme à la baisse. On décide d'introduire des variables indicatrices pour prendre en compte ces observations.
+```{r}
+tail(df_g,n=15)
+```
+
+### Estimation d'un modèle VAR
+
+```{r}
+df_g$dummy_2013T1<-as.numeric(df_g$date=="2013-01-01")
+df_g$dummy_2020T1<-as.numeric(df_g$date=="2020-01-01")
+df_g$dummy_2020T2<-as.numeric(df_g$date=="2020-04-01")
+df_g$dummy_2020T3<-as.numeric(df_g$date=="2020-07-01")
+df_g$dummy_2020T4<-as.numeric(df_g$date=="2020-10-01")
+df_g$dummy_2021T1<-as.numeric(df_g$date=="2021-01-01")
+df_g$dummy_2021T2<-as.numeric(df_g$date=="2021-04-01")
+```
+
+On cherche le nombre de retards optimal en ajoutant ces variables indicatrices en prenant 8 retards au maximum 
+
+```{r}
+library(vars)
+pselect<-VARselect(y=df_g[,c(2,3)],lag.max=8,type=c("const"),exogen = df_g[c(4,5,6,7,8,9,10)])
+# Affichage des valeurs des critère de sélection
+pselect$criteria 
+# nombre de retards optimal selon les critères de sélection
+pselect$selection 
+```
+
+On choisit d'estimer un modèle VAR(1).
+
+```{r}
+var.4lag_T_wd <-VAR(y = df_g[,c(2,3)],type="const",lag.max = 1,exogen = df_g[c(4,5,6,7,8,9,10)])
+summary(var.4lag_T_wd) #Affichage des résultats avec summary
+```
+
+
+
+** Commentaires **
+
+* équation de g_inc
+
+    * les coefficients de g_inc.l1 et g_cons.l1 ne sont significatifs que pour un risque de première espèce de 10 \%. Les valeurs des coefficients sont très différentes de celles des estimations précédentes. L'inclusion de la période covid a un impact sur les estimations malgré l'inclusion des variables indicatrices.
+    * toutes les indicatrices sauf dummy_2020T1 sont significatives pour un risque de première espèce de 1\%
+    * le $R^{2}$ est égal à 74,4%
+    
+* équation de g_cons
+    * les coefficients de g_inc.l1 et g_cons.l1 ne sont significatifs que pour un risque de première espèce de 1 \%. Les valeurs des coefficients sont assez proches de celles des estimations précédente
+    * dummy_2020T4 est significative pour  un risque de première espèce de 10 %. Toutes les autres indicatrices sauf dummy_2013T1 et dummy_2021T2 sont significatives pour un risque de première espèce de 1\%. 
+    * le $R^{2}$ est égal à 83,4%
+
+Nous observons que les indicatrices sont significatives pour au moins une équation, voire les deux. 
+
+
+### Tests de causalité au sens de Granger
+```{r}
+causality(var.4lag_T_wd,cause=c('g_inc'))
+```
+On rejette l'hypothèse nulle d'absence de causalité de g_inc sur g_cons pour un risque de première espèce de 1\%.
+
+```{r}
+causality(var.4lag_T_wd,cause=c('g_cons'))
+```
+On rejette l'hypothèse nulle d'absence de causalité de g_cons sur g_inc pour un risque de première espèce de 10\% seulement.
+
+
+### Estimation des fonctions impulsion réponse
+
+On garde le même ordre des variables pour le calcul des chocs structurels par la méthode de Cholesky.
+
+```{r}
+irf3<-irf(var.4lag_T_wd,n.ahead = 12,ortho = TRUE,ci=0.95)
+plot(irf3)
+```
+
+Un choc sur g_cons n'a plus d'effet significatif sur g_inc. 

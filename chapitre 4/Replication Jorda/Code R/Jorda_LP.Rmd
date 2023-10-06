@@ -3,8 +3,9 @@ title: "Replication_Jorda"
 author: "Yannick Le Pen"
 date: "2023-07-20"
 output:
-  pdf_document: default
   html_document: default
+  word_document: default
+  pdf_document: default
 ---
 
 ```{r setup, include=FALSE}
